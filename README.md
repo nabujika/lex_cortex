@@ -1,229 +1,241 @@
-# Lex Cortex
+# Legal RAG Azure
 
-`Lex Cortex` is a Legal Tech Retrieval-Augmented Generation (RAG) backend for **The Legal Brain**.
+Production-style legal RAG starter for Azure using FastAPI, LangGraph, Azure OpenAI, Azure AI Search, and Azure Database for PostgreSQL.
 
-It uses:
+## What This Project Does
 
-- **FastAPI** for the API layer
-- **LangGraph** for orchestration
-- **Azure OpenAI** for chat + embeddings
-- **PostgreSQL + pgvector** for relational + vector retrieval
-- **Hybrid RAG** with semantic search followed by SQL enrichment
+- Discovers legal PDFs from the current VS Code workspace.
+- Detects ER diagram image files for schema reference and documentation.
+- Extracts page-wise PDF text, chunks it, infers chunk types, embeds chunks with Azure OpenAI, and stores metadata in PostgreSQL.
+- Indexes chunk documents into Azure AI Search for hybrid retrieval.
+- Uses LangGraph to route questions across SQL lookup, semantic retrieval, or both.
+- Returns grounded answers with chunk-level citations.
 
-## Architecture
+The current workspace already contains legal PDFs and ER diagrams, and the code is designed around that assumption.
 
-The system follows this flow:
+## Implemented Schema
 
-1. Legal PDFs are ingested.
-2. Judgment PDFs are parsed, chunked, embedded, and stored in PostgreSQL.
-3. Statute PDFs are stored as versioned statute records.
-4. A LangGraph workflow handles query analysis, vector retrieval, SQL joins, and answer generation.
-5. The API returns:
-   - grounded answer
-   - extracted filters
-   - cases used for the answer
+The SQLAlchemy/Alembic schema implements the ER guidance with these tables:
 
-### LangGraph pipeline
+- `courts`
+- `judges`
+- `statutes`
+- `statute_versions`
+- `cases`
+- `case_chunks`
+- `case_precedents`
+- `case_statute_references`
 
-- `analyze_query`
-- `vector_search`
-- `sql_enrich`
-- `merge_results`
-- `generate_answer`
+`cases` is the system of record anchor. Azure AI Search is the primary retrieval layer, while PostgreSQL holds canonical metadata and relationship tables.
 
-## Data Model
+## Workspace Discovery
 
-Core tables implemented:
+PDF discovery order:
 
-- `court`
-- `judge`
-- `"case"`
-- `statute`
-- `case_chunk`
-- `statute_version`
-- `case_precedent`
-- `case_statute`
-- `embedding_store`
+1. `PDF_DATA_DIR` if provided
+2. `./data` if present
+3. `./cases` if present
+4. Recursive scan from `WORKSPACE_ROOT`
 
-Notes:
+ER diagram images are discovered by scanning for image files whose names contain `er` or `diagram`.
 
-- Embeddings are stored against `case_chunk`, as required by the ER model.
-- Statutes are stored in `statute` + `statute_version` and used during SQL enrichment.
-- `case_precedent` support is included for precedent traversal.
+## Setup
 
-## Project Structure
-
-```text
-app.py
-db.py
-ingest.py
-rag_graph.py
-requirements.txt
-.env.example
-README.md
-```
-
-## Environment Variables
-
-Copy `.env.example` to `.env` and fill in your Azure credentials.
-
-Important settings:
-
-- `AZURE_OPENAI_CHAT_DEPLOYMENT`
-- `AZURE_OPENAI_EMBEDDING_DEPLOYMENT`
-- `AZURE_OPENAI_EMBEDDING_DIMENSIONS`
-- `POSTGRES_HOST`
-- `POSTGRES_DB`
-- `POSTGRES_USER`
-- `POSTGRES_PASSWORD`
-
-Important:
-
-- `AZURE_OPENAI_EMBEDDING_DIMENSIONS` must match the vector dimension used in the database schema.
-- For `text-embedding-3-large`, this project explicitly requests the configured dimension size from Azure.
-
-## Azure Prerequisites
-
-Before running the app:
-
-1. Create an Azure OpenAI resource.
-2. Deploy:
-   - one chat model, such as `gpt-4o-mini`
-   - one embedding model, such as `text-embedding-3-large`
-3. Create an Azure Database for PostgreSQL Flexible Server.
-4. In PostgreSQL server parameters, allowlist the `vector` extension by adding it to `azure.extensions`.
-
-If `vector` is not allowlisted, `/admin/init-db` will fail.
-
-## Local Setup
-
-Create and activate a virtual environment:
+### 1. Create a Virtual Environment
 
 ```powershell
+cd legal-rag-azure
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+.venv\Scripts\Activate.ps1
+```
+
+### 2. Install Dependencies
+
+```powershell
 pip install -r requirements.txt
 ```
 
-Run the API:
+### 3. Configure Environment Variables
 
 ```powershell
-uvicorn app:app --host 127.0.0.1 --port 8000 --reload
+Copy-Item .env.example .env
 ```
 
-## Initialize the Database
+Fill in at least:
+
+- `AZURE_OPENAI_ENDPOINT`
+- `AZURE_OPENAI_API_KEY`
+- `AZURE_OPENAI_CHAT_DEPLOYMENT`
+- `AZURE_OPENAI_EMBEDDING_DEPLOYMENT`
+- `AZURE_OPENAI_EMBEDDING_BATCH_SIZE`
+- `AZURE_OPENAI_MAX_RETRIES`
+- `AZURE_OPENAI_RETRY_BASE_SECONDS`
+- `AZURE_SEARCH_ENDPOINT`
+- `AZURE_SEARCH_API_KEY`
+- `AZURE_SEARCH_INDEX_NAME`
+- `POSTGRES_HOST`
+- `POSTGRES_PORT`
+- `POSTGRES_DB`
+- `POSTGRES_USER`
+- `POSTGRES_PASSWORD`
+- `POSTGRES_SSLMODE`
+- `WORKSPACE_ROOT`
+- `PDF_DATA_DIR`
+
+Set `WORKSPACE_ROOT` to the workspace folder that contains the legal PDFs. In this repository, using `..` from `legal-rag-azure` points back to the DBMS project workspace where the PDFs and ER diagrams currently live.
+
+For Azure Database for PostgreSQL, set `POSTGRES_SSLMODE=require`. If your environment requires an explicit CA certificate path, also set `POSTGRES_SSLROOTCERT`.
+
+### 4. Start PostgreSQL
 
 ```powershell
-Invoke-RestMethod -Method Post http://127.0.0.1:8000/admin/init-db
+docker compose up -d
 ```
 
-You can also inspect the generated schema:
+### 5. Run Migrations
 
 ```powershell
-Invoke-RestMethod http://127.0.0.1:8000/schema
+alembic upgrade head
 ```
 
-## Ingest Legal PDFs
-
-Place judgment PDFs and statute PDFs in a directory, then call:
+### 6. Create the Azure AI Search Index
 
 ```powershell
-Invoke-RestMethod -Method Post `
-  -Uri http://127.0.0.1:8000/admin/ingest `
-  -ContentType "application/json" `
-  -Body '{"directory":"c:\\Users\\Lenovo\\Desktop\\dbs"}'
+python scripts/create_search_index.py
 ```
 
-Ingestion behavior:
-
-- statute PDFs are loaded first
-- case PDFs are chunked at roughly `450` tokens
-- overlap is `50` tokens
-- embeddings are generated via Azure OpenAI
-- chunks go to `case_chunk`
-- vectors go to `embedding_store`
-
-## Query the RAG System
-
-Example request:
+### 7. Inspect Workspace Files
 
 ```powershell
-Invoke-RestMethod -Method Post `
-  -Uri http://127.0.0.1:8000/query `
-  -ContentType "application/json" `
-  -Body '{"query":"What has the court said about bail in economic offences?","top_k":8}'
+python scripts/inspect_workspace.py
 ```
 
-Response shape:
+### 8. Ingest PDFs From the Workspace
 
-```json
-{
-  "answer": "Grounded legal answer...",
-  "cases_used": [
-    {
-      "title": "Sanjay Chandra vs Cbi",
-      "judge": "Unknown Judge",
-      "court": "Unknown Court"
-    }
-  ],
-  "filters": {
-    "judge": null,
-    "court": null,
-    "statute": null,
-    "date_from": null,
-    "date_to": null,
-    "as_of_date": null,
-    "needs_precedents": true,
-    "answer_style": null
-  }
-}
+```powershell
+python scripts/ingest_all_pdfs.py
+```
+
+If you want to target a specific folder, set `PDF_DATA_DIR` or call the API with `pdf_dir`.
+
+### 9. Run FastAPI
+
+```powershell
+uvicorn app.main:app --reload
 ```
 
 ## API Endpoints
 
-- `GET /health` - service healthcheck
-- `GET /schema` - schema metadata and SQL
-- `POST /admin/init-db` - initialize PostgreSQL schema
-- `POST /admin/ingest` - ingest legal PDFs
-- `POST /query` - run the hybrid RAG pipeline
+- `GET /health`
+- `GET /workspace/files`
+- `POST /ingest/workspace`
+- `POST /query`
 
-## Notes on Repository Contents
+### Example Ingest Request
 
-This repo intentionally excludes:
-
-- `.env`
-- `.venv`
-- server logs
-- local PDF corpus
-
-Those are ignored via `.gitignore` to avoid leaking secrets or uploading source documents unintentionally.
-
-## Deployment
-
-For Azure App Service, a typical startup command is:
-
-```text
-gunicorn -w 2 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000 app:app
+```json
+{
+  "pdf_dir": "../cases"
+}
 ```
 
-Set the same environment variables from `.env` in App Service configuration.
+### Example Query Request
 
-## Current Status
+```json
+{
+  "question": "Summarize the reasoning in Sanjay Chandra vs CBI and cite the relevant pages."
+}
+```
 
-The backend currently supports:
+### Query Response Shape
 
-- end-to-end ingestion
-- pgvector similarity search
-- SQL enrichment across `case`, `judge`, `court`, and `statute`
-- answer generation with case citations
-- precedent lookup support
-- temporal statute filtering support
+```json
+{
+  "answer": "Grounded answer here",
+  "citations": [
+    {
+      "chunk_id": "abc123",
+      "case_id": "case123",
+      "title": "Sanjay Chandra vs CBI",
+      "page_number": 4,
+      "chunk_type": "ruling",
+      "citation": "Sanjay Chandra vs CBI | page 4 | chunk abc123"
+    }
+  ],
+  "retrieved_chunks_summary": [
+    {
+      "chunk_id": "abc123",
+      "title": "Sanjay Chandra vs CBI",
+      "page_number": 4,
+      "chunk_type": "ruling",
+      "score": 2.81
+    }
+  ],
+  "route_used": "retriever"
+}
+```
 
-## Next Improvements
+## LangGraph Flow
 
-Good next steps for this repo:
+The workflow includes:
 
-- improve court and judge metadata extraction from PDF headers
-- populate `case_precedent` automatically from cited-case parsing
-- strengthen statute linking beyond title matching
-- add tests and migration tooling
+- `classify_intent`
+- `sql_lookup`
+- `retrieve_chunks`
+- `maybe_rewrite_query`
+- `retrieve_chunks_retry`
+- `grade_retrieved_docs`
+- `generate_answer`
+- `format_citations`
+
+Routing behavior:
+
+- Structured metadata questions route to SQL.
+- Semantic similarity, summarization, dissent, or reasoning questions route to Azure AI Search retrieval.
+- Mixed questions use both.
+
+Low-result retrieval triggers query rewriting before a retry. Final answers are constrained to SQL rows and retrieved chunks.
+
+## Notes On Legal Metadata Extraction
+
+The first version uses practical parsing heuristics for:
+
+- case title
+- court name
+- judge name
+- judgment date
+- case status
+
+If a field cannot be inferred, the code stores `NULL` and logs a warning. This keeps ingestion robust without blocking the pipeline.
+
+## Current Practical Limitations / TODOs
+
+- Precedent graph extraction is scaffolded in the schema but not fully populated yet.
+- Statute version extraction from case text is not fully automated yet.
+- SQL lookup currently uses focused heuristics rather than full text-to-SQL generation.
+- Retrieval grading uses a combination of search scores and lightweight LLM validation.
+- Some scanned PDFs may require OCR if `pypdf` extraction is weak.
+
+## File Highlights
+
+- `app/ingestion/workspace_discovery.py`: workspace PDF and ER diagram discovery
+- `app/ingestion/parser.py`: PDF parsing and metadata extraction
+- `app/ingestion/chunker.py`: section-aware chunking and chunk type inference
+- `app/retrievers/azure_search.py`: Azure AI Search schema + hybrid retrieval
+- `app/retrievers/sql_lookup.py`: structured lookup tool for LangGraph
+- `app/graph/workflow.py`: graph orchestration and routing
+- `app/services/ingest_service.py`: end-to-end ingestion service
+- `app/services/query_service.py`: end-to-end query service
+
+## Azure Setup You Must Complete Manually
+
+- Provision Azure OpenAI and create chat + embedding deployments.
+- Provision Azure AI Search and supply endpoint + admin key.
+- Provision Azure Database for PostgreSQL.
+- Ensure the embedding deployment dimension matches `AZURE_SEARCH_VECTOR_DIMENSIONS`.
+- Run `alembic upgrade head`.
+- Run `python scripts/create_search_index.py`.
+
+## ER Diagram Interpretation
+
+The ER diagrams in the workspace were used as design guidance. Where the diagram image text was ambiguous, the implementation chose a production-friendly interpretation aligned with the entity list you supplied.

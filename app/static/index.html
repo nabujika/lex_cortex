@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Legal RAG Console</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="page-shell">
+    <header class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">Azure Legal Intelligence Console</p>
+        <h1>Interrogate your legal corpus with grounded answers and visible evidence.</h1>
+        <p class="hero-text">
+          Browse the indexed workspace, watch ingestion health, and ask production-style legal questions backed by chunk-level citations.
+        </p>
+        <div class="hero-actions">
+          <button class="ghost-button" id="refresh-dashboard">Refresh Dashboard</button>
+          <a class="ghost-link" href="/docs" target="_blank" rel="noreferrer">Open API Docs</a>
+        </div>
+      </div>
+      <div class="hero-status" id="status-card">
+        <p class="status-label">System status</p>
+        <p class="status-value" id="health-status">Checking...</p>
+        <p class="status-subtext" id="workspace-root">Loading workspace root...</p>
+      </div>
+    </header>
+
+    <main class="dashboard-grid">
+      <section class="panel panel-metrics">
+        <div class="panel-heading">
+          <h2>Corpus Snapshot</h2>
+          <p>Live view of the current legal workspace and indexed records.</p>
+        </div>
+        <div class="metric-grid">
+          <article class="metric-card">
+            <span class="metric-label">Discovered PDFs</span>
+            <strong class="metric-value" id="pdf-count">0</strong>
+          </article>
+          <article class="metric-card">
+            <span class="metric-label">ER Diagrams</span>
+            <strong class="metric-value" id="diagram-count">0</strong>
+          </article>
+          <article class="metric-card">
+            <span class="metric-label">Ingested Cases</span>
+            <strong class="metric-value" id="case-count">0</strong>
+          </article>
+          <article class="metric-card">
+            <span class="metric-label">Stored Chunks</span>
+            <strong class="metric-value" id="chunk-count">0</strong>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel panel-ingest">
+        <div class="panel-heading">
+          <h2>Ingestion Control</h2>
+          <p>Trigger workspace ingestion or point the pipeline to a specific subfolder.</p>
+        </div>
+        <form id="ingest-form" class="stacked-form">
+          <label for="pdf-dir">Optional PDF subfolder</label>
+          <input id="pdf-dir" name="pdf_dir" type="text" placeholder="examples: cases, data/2026, ../Project">
+          <button type="submit" class="primary-button">Run Ingestion</button>
+        </form>
+        <pre class="event-log" id="ingest-log">No ingestion triggered in this session.</pre>
+      </section>
+
+      <section class="panel panel-query">
+        <div class="panel-heading">
+          <h2>Ask the Corpus</h2>
+          <p>Use natural-language legal questions for structured metadata, semantic reasoning, or hybrid retrieval.</p>
+        </div>
+        <div class="prompt-chips" id="prompt-chips">
+          <button class="chip" type="button">Which court heard Sanjay Chandra vs CBI?</button>
+          <button class="chip" type="button">Summarize the reasoning in National Insurance Company Ltd vs Pranay Sethi and cite the pages.</button>
+          <button class="chip" type="button">Find similar cases involving Article 14 and explain the legal theme.</button>
+          <button class="chip" type="button">Show dissent-related chunks in the available cases.</button>
+        </div>
+        <form id="query-form" class="stacked-form">
+          <label for="question">Legal question</label>
+          <textarea id="question" name="question" rows="5" placeholder="Ask about reasoning, courts, statute versions, or similar cases..."></textarea>
+          <button type="submit" class="primary-button">Run Query</button>
+        </form>
+      </section>
+
+      <section class="panel panel-answer">
+        <div class="panel-heading">
+          <h2>Answer Workspace</h2>
+          <p>Grounded output, route selection, and evidence rendered together.</p>
+        </div>
+        <div class="answer-frame">
+          <div class="answer-meta">
+            <span class="badge" id="route-used">Route: not run</span>
+          </div>
+          <article class="answer-copy" id="answer-text">
+            Ask a question to see a grounded legal response here.
+          </article>
+        </div>
+      </section>
+
+      <section class="panel panel-citations">
+        <div class="panel-heading">
+          <h2>Citations</h2>
+          <p>Chunk and page evidence used to support the answer.</p>
+        </div>
+        <div class="card-list" id="citations-list">
+          <p class="empty-state">No citations yet.</p>
+        </div>
+      </section>
+
+      <section class="panel panel-chunks">
+        <div class="panel-heading">
+          <h2>Retrieved Chunks</h2>
+          <p>Preview the most relevant chunk summaries returned by the query workflow.</p>
+        </div>
+        <div class="card-list" id="chunks-list">
+          <p class="empty-state">No retrieved chunks yet.</p>
+        </div>
+      </section>
+
+      <section class="panel panel-cases">
+        <div class="panel-heading">
+          <h2>Recent Cases</h2>
+          <p>Most recently persisted cases in PostgreSQL.</p>
+        </div>
+        <div class="card-list" id="recent-cases">
+          <p class="empty-state">No recent cases loaded yet.</p>
+        </div>
+      </section>
+
+      <section class="panel panel-files">
+        <div class="panel-heading">
+          <h2>Workspace Files</h2>
+          <p>Discovered PDFs and ER diagram assets from the current workspace root.</p>
+        </div>
+        <details open class="file-group">
+          <summary>PDF files <span id="pdf-summary-count">0</span></summary>
+          <div class="file-list" id="pdf-file-list"></div>
+        </details>
+        <details class="file-group">
+          <summary>ER diagram files <span id="diagram-summary-count">0</span></summary>
+          <div class="file-list" id="diagram-file-list"></div>
+        </details>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
+
