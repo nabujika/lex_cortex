@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Sequence
 import psycopg
 from dotenv import load_dotenv
 from openai import AzureOpenAI
+from psycopg import sql
 from psycopg.rows import dict_row
 
 load_dotenv()
@@ -500,6 +501,53 @@ def fetch_precedents(case_ids: Sequence[int]) -> Dict[int, List[Dict[str, Any]]]
                 }
             )
         return result
+
+
+def list_public_tables() -> List[Dict[str, Any]]:
+    with db_cursor() as (_, cur):
+        cur.execute(
+            """
+            SELECT table_name
+            FROM information_schema.tables
+            WHERE table_schema = 'public'
+            ORDER BY table_name
+            """
+        )
+        table_names = [row["table_name"] for row in cur.fetchall()]
+        tables: List[Dict[str, Any]] = []
+        for table_name in table_names:
+            cur.execute(
+                sql.SQL("SELECT COUNT(*) AS row_count FROM {}").format(sql.Identifier(table_name))
+            )
+            tables.append(
+                {
+                    "table_name": table_name,
+                    "row_count": int(cur.fetchone()["row_count"]),
+                }
+            )
+        return tables
+
+
+def fetch_table_rows(table_name: str, limit: int = 50) -> Dict[str, Any]:
+    available_tables = {item["table_name"] for item in list_public_tables()}
+    if table_name not in available_tables:
+        raise ValueError(f"Unknown table: {table_name}")
+
+    safe_limit = max(1, min(limit, 200))
+    with db_cursor() as (_, cur):
+        cur.execute(
+            sql.SQL("SELECT * FROM {} LIMIT %s").format(sql.Identifier(table_name)),
+            (safe_limit,),
+        )
+        rows = list(cur.fetchall())
+        columns = [column.name for column in cur.description]
+
+    return {
+        "table_name": table_name,
+        "columns": columns,
+        "rows": rows,
+        "limit": safe_limit,
+    }
 
 
 def export_schema_summary() -> Dict[str, Any]:

@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>The Legal Brain</title>
+    <style>
+        :root {
+            --bg: #f5f1e8;
+            --panel: #fffdf8;
+            --panel-strong: #ffffff;
+            --border: #d9d0c2;
+            --text: #241f18;
+            --muted: #6b6256;
+            --accent: #8b5e34;
+            --accent-soft: #efe1cd;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(180deg, #f3eee3 0%, #f9f7f2 100%);
+            color: var(--text);
+        }
+
+        .shell {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 24px;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            gap: 16px;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .title {
+            margin: 0;
+            font-size: 2rem;
+            line-height: 1.1;
+        }
+
+        .subtitle {
+            margin: 6px 0 0;
+            color: var(--muted);
+        }
+
+        .status {
+            padding: 10px 14px;
+            border: 1px solid var(--border);
+            background: var(--panel);
+            border-radius: 999px;
+            font-size: 0.95rem;
+            white-space: nowrap;
+        }
+
+        .layout {
+            display: grid;
+            grid-template-columns: 320px 1fr;
+            gap: 20px;
+        }
+
+        .panel {
+            background: rgba(255, 253, 248, 0.92);
+            border: 1px solid var(--border);
+            border-radius: 18px;
+            box-shadow: 0 10px 30px rgba(70, 52, 24, 0.06);
+        }
+
+        .panel-body {
+            padding: 18px;
+        }
+
+        .panel-title {
+            margin: 0 0 14px;
+            font-size: 1.1rem;
+        }
+
+        .muted {
+            color: var(--muted);
+        }
+
+        .table-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            max-height: 70vh;
+            overflow-y: auto;
+        }
+
+        .table-button {
+            width: 100%;
+            text-align: left;
+            border: 1px solid var(--border);
+            background: var(--panel-strong);
+            border-radius: 12px;
+            padding: 12px;
+            cursor: pointer;
+            color: var(--text);
+        }
+
+        .table-button.active {
+            border-color: var(--accent);
+            background: var(--accent-soft);
+        }
+
+        .table-name {
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-bottom: 14px;
+            align-items: end;
+        }
+
+        .field {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        label {
+            font-size: 0.92rem;
+            color: var(--muted);
+        }
+
+        input,
+        textarea,
+        button {
+            font: inherit;
+        }
+
+        input,
+        textarea {
+            width: 100%;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 10px 12px;
+            background: #fff;
+            color: var(--text);
+        }
+
+        textarea {
+            min-height: 120px;
+            resize: vertical;
+        }
+
+        button.primary,
+        button.secondary {
+            border: 0;
+            border-radius: 12px;
+            padding: 10px 14px;
+            cursor: pointer;
+        }
+
+        button.primary {
+            background: var(--accent);
+            color: white;
+        }
+
+        button.secondary {
+            background: #ece4d8;
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+
+        .content-grid {
+            display: grid;
+            grid-template-columns: 1.2fr 0.8fr;
+            gap: 20px;
+        }
+
+        .data-table-wrap {
+            overflow: auto;
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            background: white;
+            max-height: 60vh;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 720px;
+        }
+
+        th,
+        td {
+            padding: 10px 12px;
+            border-bottom: 1px solid #eee4d7;
+            vertical-align: top;
+            text-align: left;
+            font-size: 0.92rem;
+        }
+
+        th {
+            position: sticky;
+            top: 0;
+            background: #fbf6ee;
+            z-index: 1;
+        }
+
+        td {
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .answer-box,
+        .filters-box,
+        .cases-box {
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            background: white;
+            padding: 14px;
+        }
+
+        .answer-box {
+            min-height: 180px;
+            white-space: pre-wrap;
+            line-height: 1.55;
+        }
+
+        .cases-box ul {
+            margin: 0;
+            padding-left: 18px;
+        }
+
+        .code-like {
+            font-family: Consolas, "Courier New", monospace;
+            font-size: 0.9rem;
+            white-space: pre-wrap;
+        }
+
+        .stack {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+
+        @media (max-width: 1100px) {
+            .layout,
+            .content-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .table-list {
+                max-height: 320px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="shell">
+        <div class="header">
+            <div>
+                <h1 class="title">The Legal Brain</h1>
+                <p class="subtitle">Simple frontend for table browsing and legal RAG queries.</p>
+            </div>
+            <div class="status" id="health-status">Checking service...</div>
+        </div>
+
+        <div class="layout">
+            <aside class="panel">
+                <div class="panel-body">
+                    <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:14px;">
+                        <h2 class="panel-title" style="margin:0;">Tables</h2>
+                        <button class="secondary" id="refresh-tables">Refresh</button>
+                    </div>
+                    <div class="table-list" id="table-list"></div>
+                </div>
+            </aside>
+
+            <main class="content-grid">
+                <section class="panel">
+                    <div class="panel-body">
+                        <h2 class="panel-title">Database Viewer</h2>
+                        <div class="controls">
+                            <div class="field">
+                                <label for="selected-table">Selected Table</label>
+                                <input id="selected-table" readonly>
+                            </div>
+                            <div class="field">
+                                <label for="row-limit">Rows</label>
+                                <input id="row-limit" type="number" min="1" max="200" value="50">
+                            </div>
+                            <button class="secondary" id="load-table">Load Table</button>
+                        </div>
+                        <p class="muted" id="table-meta">Choose a table to view rows.</p>
+                        <div class="data-table-wrap" id="table-wrap">
+                            <table id="data-table">
+                                <thead></thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="panel">
+                    <div class="panel-body stack">
+                        <div>
+                            <h2 class="panel-title">Ask a Query</h2>
+                            <div class="field">
+                                <label for="query-input">Legal Question</label>
+                                <textarea id="query-input">What has the court said about bail in economic offences?</textarea>
+                            </div>
+                            <div class="controls" style="margin-top:12px;">
+                                <div class="field">
+                                    <label for="top-k">Top K</label>
+                                    <input id="top-k" type="number" min="1" max="20" value="8">
+                                </div>
+                                <button class="primary" id="run-query">Run Query</button>
+                            </div>
+                        </div>
+
+                        <div>
+                            <h3 class="panel-title">Answer</h3>
+                            <div class="answer-box" id="answer-box">Run a query to see the answer here.</div>
+                        </div>
+
+                        <div>
+                            <h3 class="panel-title">Cases Used</h3>
+                            <div class="cases-box" id="cases-box">No cases yet.</div>
+                        </div>
+
+                        <div>
+                            <h3 class="panel-title">Extracted Filters</h3>
+                            <div class="filters-box code-like" id="filters-box">No filters yet.</div>
+                        </div>
+                    </div>
+                </section>
+            </main>
+        </div>
+    </div>
+
+    <script>
+        const tableListEl = document.getElementById("table-list");
+        const selectedTableEl = document.getElementById("selected-table");
+        const rowLimitEl = document.getElementById("row-limit");
+        const tableMetaEl = document.getElementById("table-meta");
+        const tableHeadEl = document.querySelector("#data-table thead");
+        const tableBodyEl = document.querySelector("#data-table tbody");
+        const answerBoxEl = document.getElementById("answer-box");
+        const filtersBoxEl = document.getElementById("filters-box");
+        const casesBoxEl = document.getElementById("cases-box");
+        const healthStatusEl = document.getElementById("health-status");
+
+        let tableCache = [];
+        let activeTableName = "";
+
+        function safeCellValue(value) {
+            if (value === null || value === undefined) {
+                return "";
+            }
+            if (typeof value === "object") {
+                return JSON.stringify(value);
+            }
+            return String(value);
+        }
+
+        async function loadHealth() {
+            try {
+                const response = await fetch("/health");
+                const data = await response.json();
+                healthStatusEl.textContent = `${data.service}: ${data.status}`;
+            } catch (error) {
+                healthStatusEl.textContent = "Service check failed";
+            }
+        }
+
+        async function loadTables() {
+            tableListEl.innerHTML = "<div class='muted'>Loading tables...</div>";
+            const response = await fetch("/ui/tables");
+            const data = await response.json();
+            tableCache = data.tables || [];
+
+            if (!tableCache.length) {
+                tableListEl.innerHTML = "<div class='muted'>No tables found.</div>";
+                return;
+            }
+
+            tableListEl.innerHTML = "";
+            tableCache.forEach((table) => {
+                const button = document.createElement("button");
+                button.className = "table-button";
+                button.innerHTML = `
+                    <div class="table-name">${table.table_name}</div>
+                    <div class="muted">${table.row_count} rows</div>
+                `;
+                button.addEventListener("click", () => selectTable(table.table_name));
+                if (table.table_name === activeTableName) {
+                    button.classList.add("active");
+                }
+                tableListEl.appendChild(button);
+            });
+
+            if (!activeTableName) {
+                selectTable(tableCache[0].table_name);
+            }
+        }
+
+        function refreshActiveButton() {
+            const buttons = tableListEl.querySelectorAll(".table-button");
+            buttons.forEach((button) => {
+                const name = button.querySelector(".table-name")?.textContent;
+                button.classList.toggle("active", name === activeTableName);
+            });
+        }
+
+        async function selectTable(tableName) {
+            activeTableName = tableName;
+            selectedTableEl.value = tableName;
+            refreshActiveButton();
+            await loadTableRows();
+        }
+
+        async function loadTableRows() {
+            if (!activeTableName) {
+                return;
+            }
+
+            tableMetaEl.textContent = `Loading ${activeTableName}...`;
+            tableHeadEl.innerHTML = "";
+            tableBodyEl.innerHTML = "";
+
+            const limit = rowLimitEl.value || 50;
+            const response = await fetch(`/ui/tables/${encodeURIComponent(activeTableName)}?limit=${encodeURIComponent(limit)}`);
+            const data = await response.json();
+
+            const headRow = document.createElement("tr");
+            data.columns.forEach((column) => {
+                const th = document.createElement("th");
+                th.textContent = column;
+                headRow.appendChild(th);
+            });
+            tableHeadEl.appendChild(headRow);
+
+            data.rows.forEach((row) => {
+                const tr = document.createElement("tr");
+                data.columns.forEach((column) => {
+                    const td = document.createElement("td");
+                    td.textContent = safeCellValue(row[column]);
+                    tr.appendChild(td);
+                });
+                tableBodyEl.appendChild(tr);
+            });
+
+            const tableInfo = tableCache.find((item) => item.table_name === activeTableName);
+            const totalRows = tableInfo ? tableInfo.row_count : data.rows.length;
+            tableMetaEl.textContent = `Showing ${data.rows.length} row(s) from ${activeTableName}. Total rows: ${totalRows}.`;
+        }
+
+        async function runQuery() {
+            const query = document.getElementById("query-input").value.trim();
+            const topK = Number(document.getElementById("top-k").value || 8);
+
+            if (!query) {
+                answerBoxEl.textContent = "Please enter a query first.";
+                return;
+            }
+
+            answerBoxEl.textContent = "Running query...";
+            casesBoxEl.textContent = "Loading...";
+            filtersBoxEl.textContent = "Loading...";
+
+            const response = await fetch("/query", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ query, top_k: topK })
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                answerBoxEl.textContent = `Query failed: ${errorText}`;
+                casesBoxEl.textContent = "No cases available.";
+                filtersBoxEl.textContent = "No filters available.";
+                return;
+            }
+
+            const data = await response.json();
+            answerBoxEl.textContent = data.answer || "No answer returned.";
+            filtersBoxEl.textContent = JSON.stringify(data.filters || {}, null, 2);
+
+            const cases = data.cases_used || [];
+            if (!cases.length) {
+                casesBoxEl.textContent = "No cases returned.";
+                return;
+            }
+
+            const list = document.createElement("ul");
+            cases.forEach((item) => {
+                const li = document.createElement("li");
+                li.textContent = `${item.title} | Judge: ${item.judge || "Unknown Judge"} | Court: ${item.court || "Unknown Court"}`;
+                list.appendChild(li);
+            });
+            casesBoxEl.innerHTML = "";
+            casesBoxEl.appendChild(list);
+        }
+
+        document.getElementById("refresh-tables").addEventListener("click", loadTables);
+        document.getElementById("load-table").addEventListener("click", loadTableRows);
+        document.getElementById("run-query").addEventListener("click", runQuery);
+
+        loadHealth();
+        loadTables();
+    </script>
+</body>
+</html>
