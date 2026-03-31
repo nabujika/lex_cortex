@@ -6,10 +6,13 @@ from typing import Any, Dict, List, Optional, Sequence
 import psycopg
 from dotenv import load_dotenv
 from openai import AzureOpenAI
+from passlib.context import CryptContext
 from psycopg import sql
 from psycopg.rows import dict_row
 
 load_dotenv()
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 def get_env(name: str, default: Optional[str] = None) -> str:
@@ -107,6 +110,14 @@ CREATE INDEX IF NOT EXISTS idx_case_statute_statute_id ON case_statute(statute_i
 CREATE INDEX IF NOT EXISTS idx_embedding_store_hnsw
 ON embedding_store
 USING hnsw (embedding vector_cosine_ops);
+
+CREATE TABLE IF NOT EXISTS app_user (
+    user_id BIGSERIAL PRIMARY KEY,
+    username TEXT NOT NULL UNIQUE,
+    hashed_password TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'user')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 """
 
 
@@ -162,7 +173,12 @@ def vector_literal(values: Sequence[float]) -> str:
     return "[" + ",".join(f"{value:.8f}" for value in values) + "]"
 
 
-def upsert_court(cur: psycopg.Cursor, name: str, jurisdiction: Optional[str] = None, state: Optional[str] = None) -> int:
+def upsert_court(
+    cur: psycopg.Cursor,
+    name: str,
+    jurisdiction: Optional[str] = None,
+    state: Optional[str] = None,
+) -> int:
     cur.execute(
         """
         SELECT court_id
@@ -255,7 +271,9 @@ def upsert_case(
     return int(cur.fetchone()["case_id"])
 
 
-def replace_case_chunks(cur: psycopg.Cursor, case_id: int, chunks: List[Dict[str, Any]]) -> List[int]:
+def replace_case_chunks(
+    cur: psycopg.Cursor, case_id: int, chunks: List[Dict[str, Any]]
+) -> List[int]:
     cur.execute("DELETE FROM case_chunk WHERE case_id = %s", (case_id,))
     chunk_ids: List[int] = []
     for chunk in chunks:
@@ -265,13 +283,20 @@ def replace_case_chunks(cur: psycopg.Cursor, case_id: int, chunks: List[Dict[str
             VALUES (%s, %s, %s, %s)
             RETURNING chunk_id
             """,
-            (case_id, chunk["chunk_text"], chunk.get("chunk_type"), chunk.get("page_number")),
+            (
+                case_id,
+                chunk["chunk_text"],
+                chunk.get("chunk_type"),
+                chunk.get("page_number"),
+            ),
         )
         chunk_ids.append(int(cur.fetchone()["chunk_id"]))
     return chunk_ids
 
 
-def upsert_chunk_embeddings(cur: psycopg.Cursor, chunk_ids: Sequence[int], embeddings: Sequence[Sequence[float]]) -> None:
+def upsert_chunk_embeddings(
+    cur: psycopg.Cursor, chunk_ids: Sequence[int], embeddings: Sequence[Sequence[float]]
+) -> None:
     for chunk_id, embedding in zip(chunk_ids, embeddings):
         cur.execute(
             """
@@ -284,7 +309,9 @@ def upsert_chunk_embeddings(cur: psycopg.Cursor, chunk_ids: Sequence[int], embed
         )
 
 
-def upsert_statute(cur: psycopg.Cursor, short_title: str, act_number: Optional[str]) -> int:
+def upsert_statute(
+    cur: psycopg.Cursor, short_title: str, act_number: Optional[str]
+) -> int:
     cur.execute(
         """
         SELECT statute_id
@@ -331,7 +358,9 @@ def replace_statute_versions(
 
 
 def link_case_to_statutes(cur: psycopg.Cursor, case_id: int, full_text: str) -> None:
-    cur.execute("SELECT statute_id, short_title, COALESCE(act_number, '') AS act_number FROM statute")
+    cur.execute(
+        "SELECT statute_id, short_title, COALESCE(act_number, '') AS act_number FROM statute"
+    )
     statutes = cur.fetchall()
     normalized_text = full_text.lower()
     for statute in statutes:
@@ -358,7 +387,10 @@ def search_similar_case_chunks(
 ) -> List[Dict[str, Any]]:
     # Hybrid retrieval starts here: semantic match first, relational enrichment happens later.
     where_clauses = []
-    params: List[Any] = [vector_literal(query_embedding), vector_literal(query_embedding)]
+    params: List[Any] = [
+        vector_literal(query_embedding),
+        vector_literal(query_embedding),
+    ]
 
     if judge:
         where_clauses.append("j.full_name ILIKE %s")
@@ -367,10 +399,10 @@ def search_similar_case_chunks(
         where_clauses.append("co.name ILIKE %s")
         params.append(f"%{court}%")
     if date_from:
-        where_clauses.append('c.judgment_date >= %s')
+        where_clauses.append("c.judgment_date >= %s")
         params.append(date_from)
     if date_to:
-        where_clauses.append('c.judgment_date <= %s')
+        where_clauses.append("c.judgment_date <= %s")
         params.append(date_to)
 
     where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
@@ -435,14 +467,18 @@ def fetch_case_details(case_ids: Sequence[int]) -> List[Dict[str, Any]]:
         return list(cur.fetchall())
 
 
-def fetch_relevant_statutes(statute_name: Optional[str] = None, as_of_date: Optional[str] = None) -> List[Dict[str, Any]]:
+def fetch_relevant_statutes(
+    statute_name: Optional[str] = None, as_of_date: Optional[str] = None
+) -> List[Dict[str, Any]]:
     conditions = []
     params: List[Any] = []
     if statute_name:
         conditions.append("s.short_title ILIKE %s")
         params.append(f"%{statute_name}%")
     if as_of_date:
-        conditions.append("(sv.valid_from IS NULL OR sv.valid_from <= %s) AND (sv.valid_to IS NULL OR sv.valid_to >= %s)")
+        conditions.append(
+            "(sv.valid_from IS NULL OR sv.valid_from <= %s) AND (sv.valid_to IS NULL OR sv.valid_to >= %s)"
+        )
         params.extend([as_of_date, as_of_date])
     else:
         conditions.append("sv.is_active = TRUE")
@@ -517,7 +553,9 @@ def list_public_tables() -> List[Dict[str, Any]]:
         tables: List[Dict[str, Any]] = []
         for table_name in table_names:
             cur.execute(
-                sql.SQL("SELECT COUNT(*) AS row_count FROM {}").format(sql.Identifier(table_name))
+                sql.SQL("SELECT COUNT(*) AS row_count FROM {}").format(
+                    sql.Identifier(table_name)
+                )
             )
             tables.append(
                 {
@@ -551,8 +589,72 @@ def fetch_table_rows(table_name: str, limit: int = 50) -> Dict[str, Any]:
 
 
 def export_schema_summary() -> Dict[str, Any]:
-    return {"embedding_dimensions": get_embedding_dimensions(), "schema_sql": get_schema_sql()}
+    return {
+        "embedding_dimensions": get_embedding_dimensions(),
+        "schema_sql": get_schema_sql(),
+    }
 
 
 def dump_json(data: Any) -> str:
     return json.dumps(data, default=str, indent=2)
+
+
+# ---------------------------------------------------------------------------
+# Auth helpers
+# ---------------------------------------------------------------------------
+
+
+def hash_password(plain: str) -> str:
+    return pwd_context.hash(plain)
+
+
+def verify_password(plain: str, hashed: str) -> bool:
+    return pwd_context.verify(plain, hashed)
+
+
+def create_user(username: str, password: str, role: str = "user") -> Dict[str, Any]:
+    hashed = hash_password(password)
+    with db_cursor() as (_, cur):
+        cur.execute(
+            """
+            INSERT INTO app_user (username, hashed_password, role)
+            VALUES (%s, %s, %s)
+            RETURNING user_id, username, role, created_at
+            """,
+            (username, hashed, role),
+        )
+        return dict(cur.fetchone())
+
+
+def get_user_by_username(username: str) -> Optional[Dict[str, Any]]:
+    with db_cursor() as (_, cur):
+        cur.execute(
+            "SELECT user_id, username, hashed_password, role, created_at FROM app_user WHERE username = %s",
+            (username,),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def list_users() -> List[Dict[str, Any]]:
+    with db_cursor() as (_, cur):
+        cur.execute(
+            "SELECT user_id, username, role, created_at FROM app_user ORDER BY created_at"
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
+def delete_user(username: str) -> bool:
+    with db_cursor() as (_, cur):
+        cur.execute(
+            "DELETE FROM app_user WHERE username = %s RETURNING user_id", (username,)
+        )
+        return cur.fetchone() is not None
+
+
+def seed_default_users() -> None:
+    """Create default admin and user accounts if they don't exist yet."""
+    if not get_user_by_username("admin"):
+        create_user("admin", "admin123", role="admin")
+    if not get_user_by_username("user"):
+        create_user("user", "user123", role="user")
