@@ -1,0 +1,1159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>The Legal Brain</title>
+  <style>
+    /* ── Reset & tokens ───────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:           #f3ede0;
+      --surface:      #fffdf8;
+      --surface-2:    #f9f4ea;
+      --border:       #ddd4c2;
+      --border-soft:  #ede5d6;
+      --text:         #1e1a14;
+      --muted:        #7a6e5f;
+      --accent:       #8b4513;
+      --accent-h:     #a0521a;
+      --accent-soft:  #f2e4d0;
+      --green:        #2d7a4f;
+      --green-soft:   #dff2e9;
+      --red:          #b52a2a;
+      --red-soft:     #fde8e8;
+      --radius:       14px;
+      --radius-sm:    8px;
+      --shadow:       0 4px 24px rgba(60,40,10,.08);
+      --shadow-sm:    0 2px 8px rgba(60,40,10,.06);
+    }
+
+    body {
+      font-family: "Segoe UI", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    /* ── Login screen ─────────────────────────────────────────────── */
+    #login-screen {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 24px;
+      background: linear-gradient(135deg, #f0e6d0 0%, #e8dcc8 100%);
+    }
+
+    .login-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      box-shadow: 0 20px 60px rgba(60,40,10,.14);
+      padding: 48px 40px;
+      width: 100%;
+      max-width: 420px;
+    }
+
+    .login-logo {
+      font-size: 2.2rem;
+      font-weight: 700;
+      color: var(--accent);
+      margin-bottom: 6px;
+      letter-spacing: -.5px;
+    }
+
+    .login-sub {
+      color: var(--muted);
+      font-size: .95rem;
+      margin-bottom: 32px;
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 16px;
+    }
+
+    .form-group label {
+      font-size: .875rem;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+
+    .form-group input {
+      padding: 11px 14px;
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius-sm);
+      font: inherit;
+      font-size: .95rem;
+      background: #fff;
+      color: var(--text);
+      transition: border-color .15s;
+    }
+
+    .form-group input:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+
+    .login-error {
+      background: var(--red-soft);
+      color: var(--red);
+      padding: 10px 14px;
+      border-radius: var(--radius-sm);
+      font-size: .9rem;
+      margin-bottom: 14px;
+      display: none;
+    }
+
+    /* ── Buttons ──────────────────────────────────────────────────── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 10px 18px;
+      border: none;
+      border-radius: var(--radius-sm);
+      font: inherit;
+      font-size: .9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background .15s, transform .1s;
+      white-space: nowrap;
+    }
+    .btn:active { transform: scale(.97); }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+    }
+    .btn-primary:hover { background: var(--accent-h); }
+
+    .btn-secondary {
+      background: var(--surface-2);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .btn-secondary:hover { background: var(--accent-soft); }
+
+    .btn-danger {
+      background: var(--red-soft);
+      color: var(--red);
+      border: 1px solid #f5c6c6;
+    }
+    .btn-danger:hover { background: #fad4d4; }
+
+    .btn-sm { padding: 6px 12px; font-size: .82rem; }
+    .btn-full { width: 100%; justify-content: center; }
+
+    /* ── App shell ────────────────────────────────────────────────── */
+    #app-screen { display: none; min-height: 100vh; }
+
+    .topbar {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0 28px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      height: 60px;
+      box-shadow: var(--shadow-sm);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .topbar-brand {
+      font-size: 1.15rem;
+      font-weight: 700;
+      color: var(--accent);
+      letter-spacing: -.3px;
+      flex: 1;
+    }
+
+    .topbar-badge {
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: .78rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+    }
+
+    .badge-admin { background: var(--accent-soft); color: var(--accent); }
+    .badge-user  { background: var(--green-soft);  color: var(--green);  }
+
+    .topbar-user {
+      font-size: .9rem;
+      color: var(--muted);
+    }
+
+    /* ── Tabs ─────────────────────────────────────────────────────── */
+    .tabs {
+      display: flex;
+      gap: 4px;
+      padding: 0 28px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .tab-btn {
+      padding: 14px 18px;
+      border: none;
+      background: none;
+      font: inherit;
+      font-size: .9rem;
+      font-weight: 600;
+      color: var(--muted);
+      cursor: pointer;
+      border-bottom: 3px solid transparent;
+      transition: color .15s, border-color .15s;
+    }
+
+    .tab-btn:hover { color: var(--text); }
+    .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+    .tab-panel { display: none; padding: 28px; }
+    .tab-panel.active { display: block; }
+
+    /* ── Cards / panels ───────────────────────────────────────────── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+
+    .card-header {
+      padding: 18px 20px 14px;
+      border-bottom: 1px solid var(--border-soft);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .card-title {
+      font-size: 1rem;
+      font-weight: 700;
+    }
+
+    .card-body { padding: 20px; }
+
+    /* ── Query tab ────────────────────────────────────────────────── */
+    .query-layout {
+      display: grid;
+      grid-template-columns: 1fr 360px;
+      gap: 24px;
+      max-width: 1300px;
+    }
+
+    .query-input-area {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    textarea.query-box {
+      width: 100%;
+      min-height: 110px;
+      padding: 14px;
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius-sm);
+      font: inherit;
+      font-size: .95rem;
+      resize: vertical;
+      background: #fff;
+      color: var(--text);
+      transition: border-color .15s;
+    }
+    textarea.query-box:focus { outline: none; border-color: var(--accent); }
+
+    .query-controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+
+    .topk-field {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: .88rem;
+      color: var(--muted);
+    }
+
+    .topk-field input {
+      width: 64px;
+      padding: 7px 10px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      font: inherit;
+      font-size: .9rem;
+      background: #fff;
+    }
+
+    .answer-section { display: flex; flex-direction: column; gap: 18px; }
+
+    .answer-box {
+      padding: 18px;
+      border: 1.5px solid var(--border-soft);
+      border-radius: var(--radius-sm);
+      background: #fff;
+      min-height: 140px;
+      line-height: 1.7;
+      font-size: .95rem;
+      white-space: pre-wrap;
+      color: var(--text);
+    }
+
+    .answer-box.placeholder { color: var(--muted); font-style: italic; }
+
+    .thinking-dots::after {
+      content: '...';
+      animation: dots 1.2s steps(4, end) infinite;
+    }
+    @keyframes dots {
+      0%, 20%  { content: '.';   }
+      40%      { content: '..';  }
+      60%, 100%{ content: '...'; }
+    }
+
+    /* ── Cases list ───────────────────────────────────────────────── */
+    .cases-list { display: flex; flex-direction: column; gap: 10px; }
+
+    .case-card {
+      padding: 12px 14px;
+      border: 1px solid var(--border-soft);
+      border-radius: var(--radius-sm);
+      background: var(--surface-2);
+    }
+
+    .case-title { font-weight: 600; font-size: .9rem; margin-bottom: 4px; }
+    .case-meta  { font-size: .82rem; color: var(--muted); }
+
+    /* ── Filters ──────────────────────────────────────────────────── */
+    .filters-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .filter-chip {
+      padding: 6px 10px;
+      border-radius: var(--radius-sm);
+      background: var(--surface-2);
+      border: 1px solid var(--border-soft);
+      font-size: .82rem;
+    }
+
+    .filter-chip .fk { color: var(--muted); font-size: .75rem; text-transform: uppercase; }
+    .filter-chip .fv { font-weight: 600; color: var(--text); }
+    .filter-chip .fv.null-val { color: var(--muted); font-style: italic; }
+
+    /* ── DB Viewer tab ────────────────────────────────────────────── */
+    .db-layout {
+      display: grid;
+      grid-template-columns: 240px 1fr;
+      gap: 24px;
+      max-width: 1300px;
+    }
+
+    .table-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-height: calc(100vh - 180px);
+      overflow-y: auto;
+    }
+
+    .table-btn {
+      text-align: left;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      border-radius: var(--radius-sm);
+      padding: 10px 12px;
+      cursor: pointer;
+      font: inherit;
+      font-size: .88rem;
+      color: var(--text);
+      transition: background .12s, border-color .12s;
+    }
+    .table-btn:hover { background: var(--accent-soft); border-color: var(--accent); }
+    .table-btn.active { background: var(--accent-soft); border-color: var(--accent); font-weight: 700; }
+
+    .table-btn-name { font-weight: 600; }
+    .table-btn-count { font-size: .78rem; color: var(--muted); margin-top: 2px; }
+
+    .data-table-wrap {
+      overflow: auto;
+      max-height: calc(100vh - 260px);
+      border: 1px solid var(--border-soft);
+      border-radius: var(--radius-sm);
+    }
+
+    table { width: 100%; border-collapse: collapse; min-width: 600px; }
+    th, td { padding: 9px 12px; border-bottom: 1px solid #ede5d6; font-size: .87rem; text-align: left; vertical-align: top; }
+    th { position: sticky; top: 0; background: var(--surface-2); font-weight: 700; font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); z-index: 1; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #faf5ed; }
+    td { white-space: pre-wrap; word-break: break-word; max-width: 320px; }
+
+    /* ── Admin tab ────────────────────────────────────────────────── */
+    .admin-layout {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      max-width: 1100px;
+    }
+
+    .admin-section { display: flex; flex-direction: column; gap: 16px; }
+
+    .ingest-input {
+      width: 100%;
+      padding: 10px 14px;
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius-sm);
+      font: inherit;
+      font-size: .9rem;
+      background: #fff;
+    }
+    .ingest-input:focus { outline: none; border-color: var(--accent); }
+
+    .log-box {
+      background: #1e1a14;
+      color: #d4c9a8;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: .82rem;
+      padding: 14px;
+      border-radius: var(--radius-sm);
+      min-height: 120px;
+      max-height: 260px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      line-height: 1.5;
+    }
+
+    .user-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 14px;
+      border: 1px solid var(--border-soft);
+      border-radius: var(--radius-sm);
+      background: var(--surface-2);
+    }
+
+    .user-row-name { flex: 1; font-weight: 600; font-size: .9rem; }
+
+    /* ── Toast ────────────────────────────────────────────────────── */
+    #toast {
+      position: fixed;
+      bottom: 28px;
+      right: 28px;
+      padding: 12px 20px;
+      border-radius: var(--radius-sm);
+      font-size: .9rem;
+      font-weight: 600;
+      box-shadow: 0 8px 32px rgba(0,0,0,.18);
+      z-index: 9999;
+      display: none;
+      max-width: 340px;
+    }
+    #toast.success { background: var(--green-soft); color: var(--green); border: 1px solid #9adbbe; }
+    #toast.error   { background: var(--red-soft);   color: var(--red);   border: 1px solid #f5a6a6; }
+
+    /* ── Spinner ──────────────────────────────────────────────────── */
+    .spinner {
+      display: inline-block;
+      width: 16px; height: 16px;
+      border: 2px solid rgba(255,255,255,.4);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+      vertical-align: middle;
+    }
+    .spinner-dark {
+      border-color: rgba(139,69,19,.25);
+      border-top-color: var(--accent);
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Misc ─────────────────────────────────────────────────────── */
+    .chip {
+      display: inline-block;
+      padding: 2px 9px;
+      border-radius: 999px;
+      font-size: .75rem;
+      font-weight: 700;
+    }
+    .chip-admin { background: var(--accent-soft); color: var(--accent); }
+    .chip-user  { background: var(--green-soft);  color: var(--green); }
+
+    .divider { border: none; border-top: 1px solid var(--border-soft); margin: 6px 0; }
+
+    .status-dot {
+      display: inline-block;
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: #ccc;
+      margin-right: 6px;
+    }
+    .status-dot.ok  { background: var(--green); }
+    .status-dot.err { background: var(--red); }
+
+    @media (max-width: 900px) {
+      .query-layout, .db-layout, .admin-layout { grid-template-columns: 1fr; }
+      .filters-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ══════════════════════ LOGIN ══════════════════════ -->
+<div id="login-screen">
+  <div class="login-card">
+    <div class="login-logo">⚖ The Legal Brain</div>
+    <p class="login-sub">Sign in to continue</p>
+
+    <div id="login-error" class="login-error"></div>
+
+    <div class="form-group">
+      <label for="login-username">Username</label>
+      <input id="login-username" type="text" autocomplete="username" placeholder="e.g. admin" />
+    </div>
+
+    <div class="form-group">
+      <label for="login-password">Password</label>
+      <input id="login-password" type="password" autocomplete="current-password" placeholder="••••••••" />
+    </div>
+
+    <button class="btn btn-primary btn-full" id="login-btn" style="margin-top:8px;">
+      Sign In
+    </button>
+
+    <p style="margin-top:20px; font-size:.82rem; color:var(--muted); text-align:center;">
+      Default accounts: <strong>admin / admin123</strong> &nbsp;|&nbsp; <strong>user / user123</strong>
+    </p>
+  </div>
+</div>
+
+<!-- ══════════════════════ APP ══════════════════════ -->
+<div id="app-screen">
+  <!-- Top bar -->
+  <div class="topbar">
+    <div class="topbar-brand">⚖ The Legal Brain</div>
+    <span id="health-dot" class="status-dot"></span>
+    <span id="health-label" style="font-size:.85rem; color:var(--muted);">checking…</span>
+    <span id="user-badge" class="topbar-badge"></span>
+    <span id="user-name" class="topbar-user"></span>
+    <button class="btn btn-secondary btn-sm" id="logout-btn">Sign Out</button>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="query">Query</button>
+    <button class="tab-btn" data-tab="db">Database</button>
+    <button class="tab-btn admin-only" data-tab="admin" style="display:none;">Admin</button>
+  </div>
+
+  <!-- ── QUERY TAB ── -->
+  <div class="tab-panel active" id="tab-query">
+    <div class="query-layout">
+      <!-- Left: input + answer -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Ask a Legal Question</span>
+        </div>
+        <div class="card-body">
+          <div class="query-input-area">
+            <textarea class="query-box" id="query-input" placeholder="e.g. What has the court said about bail in economic offences?">What has the court said about bail in economic offences?</textarea>
+            <div class="query-controls">
+              <button class="btn btn-primary" id="run-query-btn">Run Query</button>
+              <div class="topk-field">
+                <label for="top-k">Top K</label>
+                <input id="top-k" type="number" min="1" max="20" value="8" />
+              </div>
+              <span id="query-status" style="font-size:.85rem; color:var(--muted);"></span>
+            </div>
+          </div>
+
+          <hr class="divider" style="margin:20px 0;">
+
+          <div class="answer-section">
+            <div>
+              <div style="font-size:.8rem; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; margin-bottom:8px;">Answer</div>
+              <div class="answer-box placeholder" id="answer-box">Run a query to see the answer here.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right: cases + filters -->
+      <div style="display:flex; flex-direction:column; gap:20px;">
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Cases Used</span>
+            <span id="cases-count" style="font-size:.82rem; color:var(--muted);"></span>
+          </div>
+          <div class="card-body">
+            <div class="cases-list" id="cases-list">
+              <div style="color:var(--muted); font-size:.9rem; font-style:italic;">No cases yet.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Extracted Filters</span>
+          </div>
+          <div class="card-body">
+            <div class="filters-grid" id="filters-grid">
+              <div style="color:var(--muted); font-size:.9rem; font-style:italic; grid-column:1/-1;">No filters yet.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── DB TAB ── -->
+  <div class="tab-panel" id="tab-db">
+    <div class="db-layout">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Tables</span>
+          <button class="btn btn-secondary btn-sm" id="refresh-tables-btn">Refresh</button>
+        </div>
+        <div class="card-body" style="padding-top:14px;">
+          <div class="table-list" id="table-list">
+            <div style="color:var(--muted); font-size:.9rem;">Loading…</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title" id="active-table-title">Select a table</span>
+          <div style="display:flex; gap:8px; align-items:center;">
+            <div class="topk-field">
+              <label for="row-limit">Rows</label>
+              <input id="row-limit" type="number" min="1" max="200" value="50" />
+            </div>
+            <button class="btn btn-secondary btn-sm" id="load-table-btn">Load</button>
+          </div>
+        </div>
+        <div class="card-body" style="padding:0;">
+          <p id="table-meta" style="padding:14px 20px; font-size:.85rem; color:var(--muted); display:none;"></p>
+          <div class="data-table-wrap" id="table-wrap">
+            <div style="padding:24px; color:var(--muted); font-style:italic; font-size:.9rem;">Choose a table from the sidebar.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── ADMIN TAB ── -->
+  <div class="tab-panel" id="tab-admin">
+    <div class="admin-layout">
+      <!-- DB management -->
+      <div class="admin-section">
+        <div class="card">
+          <div class="card-header"><span class="card-title">Database</span></div>
+          <div class="card-body" style="display:flex; flex-direction:column; gap:12px;">
+            <p style="font-size:.9rem; color:var(--muted);">Initialise schema and seed default accounts. Safe to run multiple times.</p>
+            <button class="btn btn-primary" id="init-db-btn">Initialise Database</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><span class="card-title">Ingest Documents</span></div>
+          <div class="card-body" style="display:flex; flex-direction:column; gap:12px;">
+            <p style="font-size:.9rem; color:var(--muted);">Provide the server-side path to a directory of judgment/statute PDFs.</p>
+            <input class="ingest-input" id="ingest-path" type="text" placeholder="/path/to/pdfs" />
+            <button class="btn btn-primary" id="ingest-btn">Start Ingestion</button>
+            <div class="log-box" id="ingest-log">Waiting…</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- User management -->
+      <div class="admin-section">
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">User Management</span>
+            <button class="btn btn-secondary btn-sm" id="refresh-users-btn">Refresh</button>
+          </div>
+          <div class="card-body" style="display:flex; flex-direction:column; gap:10px;">
+            <div id="user-list" style="display:flex; flex-direction:column; gap:8px; min-height:60px;">
+              <div style="color:var(--muted); font-size:.9rem;">Loading…</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><span class="card-title">Create Account</span></div>
+          <div class="card-body" style="display:flex; flex-direction:column; gap:12px;">
+            <div class="form-group" style="margin:0;">
+              <label for="new-username">Username</label>
+              <input id="new-username" type="text" placeholder="johndoe" />
+            </div>
+            <div class="form-group" style="margin:0;">
+              <label for="new-password">Password</label>
+              <input id="new-password" type="password" placeholder="••••••••" />
+            </div>
+            <div class="form-group" style="margin:0;">
+              <label for="new-role">Role</label>
+              <select id="new-role" style="padding:10px 14px; border:1.5px solid var(--border); border-radius:var(--radius-sm); font:inherit; background:#fff;">
+                <option value="user">User (read-only)</option>
+                <option value="admin">Admin (full access)</option>
+              </select>
+            </div>
+            <div id="create-user-error" style="color:var(--red); font-size:.85rem; display:none;"></div>
+            <button class="btn btn-primary" id="create-user-btn">Create Account</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+let token = localStorage.getItem("lb_token") || "";
+let currentUser = null;
+let activeTable = "";
+let tableCache = [];
+
+// ── Utils ──────────────────────────────────────────────────────────────────
+function showToast(msg, type = "success") {
+  const el = document.getElementById("toast");
+  el.textContent = msg;
+  el.className = type;
+  el.style.display = "block";
+  clearTimeout(el._timer);
+  el._timer = setTimeout(() => { el.style.display = "none"; }, 3200);
+}
+
+function apiFetch(url, opts = {}) {
+  const headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
+  if (token) headers["Authorization"] = "Bearer " + token;
+  return fetch(url, { ...opts, headers });
+}
+
+// ── Auth ───────────────────────────────────────────────────────────────────
+document.getElementById("login-btn").addEventListener("click", doLogin);
+document.getElementById("login-password").addEventListener("keydown", e => { if (e.key === "Enter") doLogin(); });
+
+async function doLogin() {
+  const username = document.getElementById("login-username").value.trim();
+  const password = document.getElementById("login-password").value;
+  const errEl = document.getElementById("login-error");
+  const btn = document.getElementById("login-btn");
+
+  errEl.style.display = "none";
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Signing in…';
+
+  try {
+    const resp = await fetch("/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`
+    });
+
+    if (!resp.ok) {
+      const d = await resp.json();
+      errEl.textContent = d.detail || "Login failed.";
+      errEl.style.display = "block";
+      return;
+    }
+
+    const data = await resp.json();
+    token = data.access_token;
+    localStorage.setItem("lb_token", token);
+    currentUser = { username: data.username, role: data.role };
+    enterApp();
+  } catch (err) {
+    errEl.textContent = "Network error. Is the server running?";
+    errEl.style.display = "block";
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Sign In";
+  }
+}
+
+document.getElementById("logout-btn").addEventListener("click", () => {
+  token = "";
+  currentUser = null;
+  localStorage.removeItem("lb_token");
+  document.getElementById("app-screen").style.display = "none";
+  document.getElementById("login-screen").style.display = "flex";
+});
+
+// ── App init ───────────────────────────────────────────────────────────────
+async function enterApp() {
+  document.getElementById("login-screen").style.display = "none";
+  document.getElementById("app-screen").style.display = "block";
+
+  // Badge
+  const badge = document.getElementById("user-badge");
+  badge.textContent = currentUser.role;
+  badge.className = "topbar-badge " + (currentUser.role === "admin" ? "badge-admin" : "badge-user");
+  document.getElementById("user-name").textContent = currentUser.username;
+
+  // Show admin tab if admin
+  document.querySelectorAll(".admin-only").forEach(el => {
+    el.style.display = currentUser.role === "admin" ? "" : "none";
+  });
+
+  checkHealth();
+  loadTables();
+  if (currentUser.role === "admin") loadUsers();
+}
+
+// ── Health ─────────────────────────────────────────────────────────────────
+async function checkHealth() {
+  try {
+    const r = await fetch("/health");
+    const d = await r.json();
+    document.getElementById("health-dot").className = "status-dot ok";
+    document.getElementById("health-label").textContent = d.service + " — " + d.status;
+  } catch {
+    document.getElementById("health-dot").className = "status-dot err";
+    document.getElementById("health-label").textContent = "Service unreachable";
+  }
+}
+
+// ── Tabs ───────────────────────────────────────────────────────────────────
+document.querySelectorAll(".tab-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const tab = btn.dataset.tab;
+    document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+    document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
+    btn.classList.add("active");
+    document.getElementById("tab-" + tab).classList.add("active");
+  });
+});
+
+// ── Query ──────────────────────────────────────────────────────────────────
+document.getElementById("run-query-btn").addEventListener("click", runQuery);
+document.getElementById("query-input").addEventListener("keydown", e => {
+  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) runQuery();
+});
+
+async function runQuery() {
+  const query = document.getElementById("query-input").value.trim();
+  const topK = Number(document.getElementById("top-k").value || 8);
+  if (!query) return;
+
+  const answerEl = document.getElementById("answer-box");
+  const casesEl = document.getElementById("cases-list");
+  const filtersEl = document.getElementById("filters-grid");
+  const statusEl = document.getElementById("query-status");
+  const btn = document.getElementById("run-query-btn");
+
+  answerEl.className = "answer-box thinking-dots";
+  answerEl.textContent = "Thinking";
+  casesEl.innerHTML = '<div style="color:var(--muted);font-size:.9rem;">Loading…</div>';
+  filtersEl.innerHTML = '<div style="color:var(--muted);font-size:.9rem;grid-column:1/-1;">Loading…</div>';
+  statusEl.textContent = "";
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Running…';
+
+  const t0 = Date.now();
+
+  try {
+    const resp = await apiFetch("/query", {
+      method: "POST",
+      body: JSON.stringify({ query, top_k: topK })
+    });
+
+    const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+
+    if (!resp.ok) {
+      const err = await resp.json();
+      answerEl.className = "answer-box";
+      answerEl.style.color = "var(--red)";
+      answerEl.textContent = "Error: " + (err.detail || resp.statusText);
+      return;
+    }
+
+    const data = await resp.json();
+    answerEl.className = "answer-box";
+    answerEl.style.color = "";
+    answerEl.textContent = data.answer || "No answer returned.";
+    statusEl.textContent = `${elapsed}s`;
+
+    // Cases
+    const cases = data.cases_used || [];
+    document.getElementById("cases-count").textContent = cases.length ? `${cases.length} case${cases.length > 1 ? "s" : ""}` : "";
+    if (cases.length) {
+      casesEl.innerHTML = "";
+      cases.forEach(c => {
+        const div = document.createElement("div");
+        div.className = "case-card";
+        div.innerHTML = `
+          <div class="case-title">${escHtml(c.title || "Untitled")}</div>
+          <div class="case-meta">
+            ${c.judge ? "Judge: " + escHtml(c.judge) + " &nbsp;·&nbsp; " : ""}
+            ${c.court ? "Court: " + escHtml(c.court) : ""}
+          </div>`;
+        casesEl.appendChild(div);
+      });
+    } else {
+      casesEl.innerHTML = '<div style="color:var(--muted);font-size:.9rem;font-style:italic;">No cases returned.</div>';
+    }
+
+    // Filters
+    const f = data.filters || {};
+    const keys = Object.keys(f);
+    if (keys.length) {
+      filtersEl.innerHTML = "";
+      keys.forEach(k => {
+        const v = f[k];
+        const chip = document.createElement("div");
+        chip.className = "filter-chip";
+        chip.innerHTML = `<div class="fk">${escHtml(k)}</div><div class="fv ${v == null ? "null-val" : ""}">${v == null ? "—" : escHtml(String(v))}</div>`;
+        filtersEl.appendChild(chip);
+      });
+    } else {
+      filtersEl.innerHTML = '<div style="color:var(--muted);font-size:.9rem;grid-column:1/-1;">No filters extracted.</div>';
+    }
+
+  } catch (err) {
+    answerEl.className = "answer-box";
+    answerEl.textContent = "Network error: " + err.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Run Query";
+  }
+}
+
+// ── DB viewer ──────────────────────────────────────────────────────────────
+document.getElementById("refresh-tables-btn").addEventListener("click", loadTables);
+document.getElementById("load-table-btn").addEventListener("click", () => loadTableRows(activeTable));
+
+async function loadTables() {
+  const listEl = document.getElementById("table-list");
+  listEl.innerHTML = '<div style="color:var(--muted);font-size:.9rem;">Loading…</div>';
+  try {
+    const r = await apiFetch("/ui/tables");
+    const d = await r.json();
+    tableCache = d.tables || [];
+    listEl.innerHTML = "";
+    tableCache.forEach(t => {
+      const btn = document.createElement("button");
+      btn.className = "table-btn" + (t.table_name === activeTable ? " active" : "");
+      btn.innerHTML = `<div class="table-btn-name">${escHtml(t.table_name)}</div><div class="table-btn-count">${t.row_count} rows</div>`;
+      btn.addEventListener("click", () => {
+        activeTable = t.table_name;
+        document.querySelectorAll(".table-btn").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        loadTableRows(t.table_name);
+      });
+      listEl.appendChild(btn);
+    });
+    if (!activeTable && tableCache.length) {
+      activeTable = tableCache[0].table_name;
+      document.querySelector(".table-btn")?.classList.add("active");
+      loadTableRows(activeTable);
+    }
+  } catch (e) {
+    listEl.innerHTML = '<div style="color:var(--red);font-size:.9rem;">Failed to load tables.</div>';
+  }
+}
+
+async function loadTableRows(tableName) {
+  if (!tableName) return;
+  const wrap = document.getElementById("table-wrap");
+  const meta = document.getElementById("table-meta");
+  document.getElementById("active-table-title").textContent = tableName;
+  wrap.innerHTML = '<div style="padding:20px;color:var(--muted);">Loading…</div>';
+  meta.style.display = "none";
+
+  const limit = document.getElementById("row-limit").value || 50;
+  try {
+    const r = await apiFetch(`/ui/tables/${encodeURIComponent(tableName)}?limit=${limit}`);
+    const d = await r.json();
+
+    const tbl = document.createElement("table");
+    const thead = document.createElement("thead");
+    const tbody = document.createElement("tbody");
+
+    const headRow = document.createElement("tr");
+    d.columns.forEach(col => {
+      const th = document.createElement("th");
+      th.textContent = col;
+      headRow.appendChild(th);
+    });
+    thead.appendChild(headRow);
+
+    d.rows.forEach(row => {
+      const tr = document.createElement("tr");
+      d.columns.forEach(col => {
+        const td = document.createElement("td");
+        const v = row[col];
+        td.textContent = v == null ? "" : typeof v === "object" ? JSON.stringify(v) : String(v);
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+
+    tbl.appendChild(thead);
+    tbl.appendChild(tbody);
+    wrap.innerHTML = "";
+    wrap.appendChild(tbl);
+
+    const total = (tableCache.find(t => t.table_name === tableName) || {}).row_count ?? d.rows.length;
+    meta.textContent = `Showing ${d.rows.length} of ${total} rows`;
+    meta.style.display = "block";
+  } catch (e) {
+    wrap.innerHTML = '<div style="padding:20px;color:var(--red);">Failed to load rows.</div>';
+  }
+}
+
+// ── Admin – DB ─────────────────────────────────────────────────────────────
+document.getElementById("init-db-btn")?.addEventListener("click", async () => {
+  const btn = document.getElementById("init-db-btn");
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Initialising…';
+  try {
+    const r = await apiFetch("/admin/init-db", { method: "POST" });
+    const d = await r.json();
+    showToast("Database initialised: " + d.status);
+    loadTables();
+  } catch (e) {
+    showToast("Init failed: " + e.message, "error");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Initialise Database";
+  }
+});
+
+document.getElementById("ingest-btn")?.addEventListener("click", async () => {
+  const dir = document.getElementById("ingest-path").value.trim();
+  const log = document.getElementById("ingest-log");
+  const btn = document.getElementById("ingest-btn");
+  if (!dir) { showToast("Enter a directory path first.", "error"); return; }
+
+  log.textContent = "Starting ingestion…\n";
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Ingesting…';
+
+  try {
+    const r = await apiFetch("/admin/ingest", { method: "POST", body: JSON.stringify({ directory: dir }) });
+    const d = await r.json();
+    if (!r.ok) { log.textContent += "Error: " + (d.detail || r.statusText); return; }
+    log.textContent += `Done. ${d.documents_processed} document(s) processed.\n\n`;
+    d.results.forEach(res => { log.textContent += `  • ${JSON.stringify(res)}\n`; });
+    showToast(`${d.documents_processed} documents ingested.`);
+    loadTables();
+  } catch (e) {
+    log.textContent += "Network error: " + e.message;
+    showToast("Ingestion failed.", "error");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Start Ingestion";
+  }
+});
+
+// ── Admin – Users ──────────────────────────────────────────────────────────
+document.getElementById("refresh-users-btn")?.addEventListener("click", loadUsers);
+document.getElementById("create-user-btn")?.addEventListener("click", createUser);
+
+async function loadUsers() {
+  const listEl = document.getElementById("user-list");
+  if (!listEl) return;
+  listEl.innerHTML = '<div style="color:var(--muted);font-size:.9rem;">Loading…</div>';
+  try {
+    const r = await apiFetch("/admin/users");
+    const users = await r.json();
+    listEl.innerHTML = "";
+    users.forEach(u => {
+      const row = document.createElement("div");
+      row.className = "user-row";
+      row.innerHTML = `
+        <span class="user-row-name">${escHtml(u.username)}</span>
+        <span class="chip chip-${u.role}">${u.role}</span>
+        ${u.username !== currentUser.username
+          ? `<button class="btn btn-danger btn-sm" data-username="${escHtml(u.username)}">Delete</button>`
+          : '<span style="font-size:.8rem;color:var(--muted);">(you)</span>'}
+      `;
+      row.querySelector("[data-username]")?.addEventListener("click", () => deleteUser(u.username));
+      listEl.appendChild(row);
+    });
+  } catch (e) {
+    listEl.innerHTML = '<div style="color:var(--red);font-size:.9rem;">Failed to load users.</div>';
+  }
+}
+
+async function createUser() {
+  const username = document.getElementById("new-username").value.trim();
+  const password = document.getElementById("new-password").value;
+  const role = document.getElementById("new-role").value;
+  const errEl = document.getElementById("create-user-error");
+  const btn = document.getElementById("create-user-btn");
+
+  errEl.style.display = "none";
+  if (!username || !password) { errEl.textContent = "Username and password required."; errEl.style.display = "block"; return; }
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner spinner-dark"></span> Creating…';
+  try {
+    const r = await apiFetch("/admin/users", { method: "POST", body: JSON.stringify({ username, password, role }) });
+    const d = await r.json();
+    if (!r.ok) { errEl.textContent = d.detail || "Failed."; errEl.style.display = "block"; return; }
+    showToast(`Account "${username}" created.`);
+    document.getElementById("new-username").value = "";
+    document.getElementById("new-password").value = "";
+    loadUsers();
+  } catch (e) {
+    errEl.textContent = "Network error.";
+    errEl.style.display = "block";
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Create Account";
+  }
+}
+
+async function deleteUser(username) {
+  if (!confirm(`Delete account "${username}"?`)) return;
+  try {
+    const r = await apiFetch(`/admin/users/${encodeURIComponent(username)}`, { method: "DELETE" });
+    if (!r.ok) { const d = await r.json(); showToast(d.detail || "Delete failed.", "error"); return; }
+    showToast(`Account "${username}" deleted.`);
+    loadUsers();
+  } catch (e) {
+    showToast("Network error.", "error");
+  }
+}
+
+// ── HTML escape ────────────────────────────────────────────────────────────
+function escHtml(s) {
+  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+
+// ── Auto-login if token exists ─────────────────────────────────────────────
+(async () => {
+  if (!token) return;
+  try {
+    const r = await apiFetch("/auth/me");
+    if (r.ok) {
+      currentUser = await r.json();
+      enterApp();
+    } else {
+      localStorage.removeItem("lb_token");
+      token = "";
+    }
+  } catch {
+    localStorage.removeItem("lb_token");
+    token = "";
+  }
+})();
+</script>
+</body>
+</html>
