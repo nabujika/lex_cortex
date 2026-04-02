@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="legal-brain-deploy-marker" content="legal-brain-frontend-2026-04-02-v2" />
   <title>The Legal Brain</title>
   <style>
     /* ── Reset & tokens ───────────────────────────────────────────── */
@@ -191,6 +192,12 @@
     .topbar-user {
       font-size: .9rem;
       color: var(--muted);
+    }
+
+    .topbar-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
     }
 
     /* ── Tabs ─────────────────────────────────────────────────────── */
@@ -488,8 +495,38 @@
       font-size: .75rem;
       font-weight: 700;
     }
-    .chip-admin { background: var(--accent-soft); color: var(--accent); }
-    .chip-user  { background: var(--green-soft);  color: var(--green); }
+    .chip-read { background: var(--green-soft); color: var(--green); }
+    .chip-write { background: var(--accent-soft); color: var(--accent); }
+    .chip-create_table { background: var(--red-soft); color: var(--red); }
+
+    /* ── Modal ────────────────────────────────────────────────────── */
+    .modal-overlay {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,.45);
+      backdrop-filter: blur(3px);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 5000;
+    }
+    .modal-overlay.hidden { display: none; }
+    .modal-card {
+      background: var(--surface);
+      border-radius: var(--radius);
+      box-shadow: 0 16px 64px rgba(0,0,0,.2);
+      padding: 28px 32px;
+      min-width: 340px; max-width: 420px;
+      width: 100%;
+    }
+    .modal-title { font-size: 1.05rem; font-weight: 700; margin-bottom: 18px; }
+
+    /* ── Checkbox group ───────────────────────────────────────── */
+    .perm-checkbox-group { display: flex; flex-direction: column; gap: 8px; }
+    .perm-checkbox-group label {
+      display: flex; align-items: center; gap: 8px;
+      font-size: .9rem; cursor: pointer;
+    }
+    .perm-checkbox-group input[type="checkbox"] {
+      width: 16px; height: 16px; accent-color: var(--accent);
+    }
 
     .divider { border: none; border-top: 1px solid var(--border-soft); margin: 6px 0; }
 
@@ -548,7 +585,17 @@
     <span id="health-label" style="font-size:.85rem; color:var(--muted);">checking…</span>
     <span id="user-badge" class="topbar-badge"></span>
     <span id="user-name" class="topbar-user"></span>
-    <button class="btn btn-secondary btn-sm" id="logout-btn">Sign Out</button>
+    <div class="topbar-actions">
+      <a
+        class="btn btn-secondary btn-sm admin-only"
+        id="ai-agent-link"
+        href="https://legal-brain-admin-agent.vercel.app/admin-agent"
+        style="display:none; text-decoration:none;"
+      >
+        AI agent
+      </a>
+      <button class="btn btn-secondary btn-sm" id="logout-btn">Sign Out</button>
+    </div>
   </div>
 
   <!-- Tabs -->
@@ -704,11 +751,13 @@
               <input id="new-password" type="password" placeholder="••••••••" />
             </div>
             <div class="form-group" style="margin:0;">
-              <label for="new-role">Role</label>
-              <select id="new-role" style="padding:10px 14px; border:1.5px solid var(--border); border-radius:var(--radius-sm); font:inherit; background:#fff;">
-                <option value="user">User (read-only)</option>
-                <option value="admin">Admin (full access)</option>
-              </select>
+              <label>Permissions</label>
+              <div class="perm-checkbox-group" id="create-perm-group">
+                <label><input type="checkbox" value="read" checked disabled /> Read</label>
+                <label><input type="checkbox" value="write" /> Write</label>
+                <label><input type="checkbox" value="update_records" /> Update Records</label>
+                <label><input type="checkbox" value="create_table" /> Create Table</label>
+              </div>
             </div>
             <div id="create-user-error" style="color:var(--red); font-size:.85rem; display:none;"></div>
             <button class="btn btn-primary" id="create-user-btn">Create Account</button>
@@ -721,12 +770,30 @@
 
 <div id="toast"></div>
 
+<!-- Edit Permissions Modal -->
+<div class="modal-overlay hidden" id="edit-perm-modal">
+  <div class="modal-card">
+    <div class="modal-title">Edit Permissions — <span id="edit-perm-username"></span></div>
+    <div class="perm-checkbox-group" id="edit-perm-group">
+      <label><input type="checkbox" value="read" checked disabled /> Read</label>
+      <label><input type="checkbox" value="write" /> Write</label>
+      <label><input type="checkbox" value="update_records" /> Update Records</label>
+      <label><input type="checkbox" value="create_table" /> Create Table</label>
+    </div>
+    <div style="display:flex; gap:10px; margin-top:20px; justify-content:flex-end;">
+      <button class="btn btn-secondary btn-sm" id="edit-perm-cancel">Cancel</button>
+      <button class="btn btn-primary btn-sm" id="edit-perm-save">Save</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // ── State ──────────────────────────────────────────────────────────────────
 let token = localStorage.getItem("lb_token") || "";
 let currentUser = null;
 let activeTable = "";
 let tableCache = [];
+const AI_AGENT_URL = "https://legal-brain-admin-agent.vercel.app/admin-agent";
 
 // ── Utils ──────────────────────────────────────────────────────────────────
 function showToast(msg, type = "success") {
@@ -742,6 +809,17 @@ function apiFetch(url, opts = {}) {
   const headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
   if (token) headers["Authorization"] = "Bearer " + token;
   return fetch(url, { ...opts, headers });
+}
+
+async function readErrorMessage(resp, fallback = "Request failed.") {
+  const text = await resp.text();
+  if (!text) return fallback;
+  try {
+    const data = JSON.parse(text);
+    return data.detail || data.error || fallback;
+  } catch {
+    return text;
+  }
 }
 
 // ── Auth ───────────────────────────────────────────────────────────────────
@@ -775,7 +853,7 @@ async function doLogin() {
     const data = await resp.json();
     token = data.access_token;
     localStorage.setItem("lb_token", token);
-    currentUser = { username: data.username, role: data.role };
+    currentUser = { username: data.username, permissions: data.permissions || ["read"] };
     enterApp();
   } catch (err) {
     errEl.textContent = "Network error. Is the server running?";
@@ -801,18 +879,27 @@ async function enterApp() {
 
   // Badge
   const badge = document.getElementById("user-badge");
-  badge.textContent = currentUser.role;
-  badge.className = "topbar-badge " + (currentUser.role === "admin" ? "badge-admin" : "badge-user");
+  const perms = currentUser.permissions || ["read"];
+  badge.innerHTML = perms.map(p => `<span class="chip chip-${escHtml(p)}">${escHtml(p)}</span>`).join(" ");
+  badge.className = "topbar-badge";
   document.getElementById("user-name").textContent = currentUser.username;
 
-  // Show admin tab if admin
+  // Show admin tab if user has create_table permission
+  const hasAdmin = perms.includes("create_table");
   document.querySelectorAll(".admin-only").forEach(el => {
-    el.style.display = currentUser.role === "admin" ? "" : "none";
+    el.style.display = hasAdmin ? "" : "none";
   });
+
+  const aiAgentLink = document.getElementById("ai-agent-link");
+  if (aiAgentLink) {
+    aiAgentLink.href = hasAdmin && token
+      ? `${AI_AGENT_URL}#token=${encodeURIComponent(token)}`
+      : AI_AGENT_URL;
+  }
 
   checkHealth();
   loadTables();
-  if (currentUser.role === "admin") loadUsers();
+  if (hasAdmin) loadUsers();
 }
 
 // ── Health ─────────────────────────────────────────────────────────────────
@@ -875,10 +962,10 @@ async function runQuery() {
     const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
 
     if (!resp.ok) {
-      const err = await resp.json();
+      const errMsg = await readErrorMessage(resp, resp.statusText || "Query failed.");
       answerEl.className = "answer-box";
       answerEl.style.color = "var(--red)";
-      answerEl.textContent = "Error: " + (err.detail || resp.statusText);
+      answerEl.textContent = "Error: " + errMsg;
       return;
     }
 
@@ -976,6 +1063,7 @@ async function loadTableRows(tableName) {
   meta.style.display = "none";
 
   const limit = document.getElementById("row-limit").value || 50;
+  const canUpdate = currentUser && (currentUser.permissions || []).includes("update_records");
   try {
     const r = await apiFetch(`/ui/tables/${encodeURIComponent(tableName)}?limit=${limit}`);
     const d = await r.json();
@@ -984,22 +1072,49 @@ async function loadTableRows(tableName) {
     const thead = document.createElement("thead");
     const tbody = document.createElement("tbody");
 
+    // For the case table, add an Actions column header if user can update
     const headRow = document.createElement("tr");
     d.columns.forEach(col => {
       const th = document.createElement("th");
       th.textContent = col;
       headRow.appendChild(th);
     });
+    if (tableName === "case" && canUpdate) {
+      const th = document.createElement("th");
+      th.textContent = "Actions";
+      headRow.appendChild(th);
+    }
     thead.appendChild(headRow);
 
     d.rows.forEach(row => {
       const tr = document.createElement("tr");
       d.columns.forEach(col => {
         const td = document.createElement("td");
-        const v = row[col];
-        td.textContent = v == null ? "" : typeof v === "object" ? JSON.stringify(v) : String(v);
+        // Make notes column editable for case table
+        if (tableName === "case" && col === "notes" && canUpdate) {
+          const input = document.createElement("input");
+          input.type = "text";
+          input.value = row[col] || "";
+          input.className = "ingest-input";
+          input.style.cssText = "padding:6px 10px; font-size:.85rem; min-width:180px;";
+          input.id = `case-note-${row.case_id}`;
+          td.appendChild(input);
+        } else {
+          const v = row[col];
+          td.textContent = v == null ? "" : typeof v === "object" ? JSON.stringify(v) : String(v);
+        }
         tr.appendChild(td);
       });
+      // Add Save Note button for case table
+      if (tableName === "case" && canUpdate) {
+        const actionTd = document.createElement("td");
+        const saveBtn = document.createElement("button");
+        saveBtn.className = "btn btn-primary btn-sm";
+        saveBtn.textContent = "Save Note";
+        saveBtn.addEventListener("click", () => updateCaseNote(row.case_id));
+        actionTd.appendChild(saveBtn);
+        tr.appendChild(actionTd);
+      }
       tbody.appendChild(tr);
     });
 
@@ -1013,6 +1128,25 @@ async function loadTableRows(tableName) {
     meta.style.display = "block";
   } catch (e) {
     wrap.innerHTML = '<div style="padding:20px;color:var(--red);">Failed to load rows.</div>';
+  }
+}
+
+async function updateCaseNote(caseId) {
+  const input = document.getElementById(`case-note-${caseId}`);
+  if (!input) return;
+  try {
+    const r = await apiFetch(`/ui/tables/case/${caseId}/notes`, {
+      method: "PUT",
+      body: JSON.stringify({ notes: input.value }),
+    });
+    if (!r.ok) {
+      const d = await r.json();
+      showToast(d.detail || "Update failed.", "error");
+      return;
+    }
+    showToast("Note saved.");
+  } catch (e) {
+    showToast("Network error.", "error");
   }
 }
 
@@ -1074,16 +1208,22 @@ async function loadUsers() {
     const users = await r.json();
     listEl.innerHTML = "";
     users.forEach(u => {
+      const perms = u.permissions || ["read"];
+      const permChips = perms.map(p => `<span class="chip chip-${escHtml(p)}">${escHtml(p)}</span>`).join(" ");
       const row = document.createElement("div");
       row.className = "user-row";
       row.innerHTML = `
         <span class="user-row-name">${escHtml(u.username)}</span>
-        <span class="chip chip-${u.role}">${u.role}</span>
+        <span>${permChips}</span>
         ${u.username !== currentUser.username
-          ? `<button class="btn btn-danger btn-sm" data-username="${escHtml(u.username)}">Delete</button>`
+          ? `<button class="btn btn-secondary btn-sm" data-edit-id="${u.user_id}" data-edit-user="${escHtml(u.username)}" data-edit-perms="${escHtml(JSON.stringify(perms))}">Edit</button>
+             <button class="btn btn-danger btn-sm" data-username="${escHtml(u.username)}">Delete</button>`
           : '<span style="font-size:.8rem;color:var(--muted);">(you)</span>'}
       `;
       row.querySelector("[data-username]")?.addEventListener("click", () => deleteUser(u.username));
+      row.querySelector("[data-edit-id]")?.addEventListener("click", (e) => {
+        openEditPermModal(Number(e.target.dataset.editId), e.target.dataset.editUser, JSON.parse(e.target.dataset.editPerms));
+      });
       listEl.appendChild(row);
     });
   } catch (e) {
@@ -1094,7 +1234,9 @@ async function loadUsers() {
 async function createUser() {
   const username = document.getElementById("new-username").value.trim();
   const password = document.getElementById("new-password").value;
-  const role = document.getElementById("new-role").value;
+  const checkboxes = document.querySelectorAll("#create-perm-group input[type=checkbox]");
+  const permissions = ["read"]; // always included
+  checkboxes.forEach(cb => { if (cb.checked && cb.value !== "read") permissions.push(cb.value); });
   const errEl = document.getElementById("create-user-error");
   const btn = document.getElementById("create-user-btn");
 
@@ -1104,12 +1246,14 @@ async function createUser() {
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner spinner-dark"></span> Creating…';
   try {
-    const r = await apiFetch("/admin/users", { method: "POST", body: JSON.stringify({ username, password, role }) });
+    const r = await apiFetch("/admin/users", { method: "POST", body: JSON.stringify({ username, password, permissions }) });
     const d = await r.json();
     if (!r.ok) { errEl.textContent = d.detail || "Failed."; errEl.style.display = "block"; return; }
     showToast(`Account "${username}" created.`);
     document.getElementById("new-username").value = "";
     document.getElementById("new-password").value = "";
+    // reset checkboxes
+    document.querySelectorAll("#create-perm-group input[type=checkbox]:not(:disabled)").forEach(cb => cb.checked = false);
     loadUsers();
   } catch (e) {
     errEl.textContent = "Network error.";
@@ -1131,6 +1275,56 @@ async function deleteUser(username) {
     showToast("Network error.", "error");
   }
 }
+
+// ── Edit Permissions Modal ────────────────────────────────────────────────
+
+let editingUserId = null;
+
+function openEditPermModal(userId, username, currentPerms) {
+  editingUserId = userId;
+  document.getElementById("edit-perm-username").textContent = username;
+  const checkboxes = document.querySelectorAll("#edit-perm-group input[type=checkbox]");
+  checkboxes.forEach(cb => {
+    if (cb.value === "read") return; // always checked via disabled
+    cb.checked = currentPerms.includes(cb.value);
+  });
+  document.getElementById("edit-perm-modal").classList.remove("hidden");
+}
+
+document.getElementById("edit-perm-cancel").addEventListener("click", () => {
+  document.getElementById("edit-perm-modal").classList.add("hidden");
+  editingUserId = null;
+});
+
+document.getElementById("edit-perm-save").addEventListener("click", async () => {
+  if (!editingUserId) return;
+  const permissions = ["read"];
+  document.querySelectorAll("#edit-perm-group input[type=checkbox]").forEach(cb => {
+    if (cb.checked && cb.value !== "read") permissions.push(cb.value);
+  });
+
+  const btn = document.getElementById("edit-perm-save");
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Saving…';
+
+  try {
+    const r = await apiFetch(`/admin/users/${editingUserId}`, {
+      method: "PUT",
+      body: JSON.stringify({ permissions }),
+    });
+    const d = await r.json();
+    if (!r.ok) { showToast(d.detail || "Update failed.", "error"); return; }
+    showToast("Permissions updated.");
+    document.getElementById("edit-perm-modal").classList.add("hidden");
+    editingUserId = null;
+    loadUsers();
+  } catch (e) {
+    showToast("Network error.", "error");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Save";
+  }
+});
 
 // ── HTML escape ────────────────────────────────────────────────────────────
 function escHtml(s) {

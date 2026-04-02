@@ -1,9 +1,11 @@
+import json
 import os
-import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from uuid import uuid4
 
+from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -21,10 +23,17 @@ from db import (
     list_users,
     create_user,
     seed_default_users,
+    update_case_notes,
+    update_user_permissions,
     verify_password,
 )
 from ingest import ingest_directory
 from rag_graph import run_rag_query
+
+VALID_PERMISSIONS = {"read", "write", "create_table", "update_records"}
+ROOT_DIR = Path(__file__).resolve().parent
+load_dotenv(ROOT_DIR / ".env")
+load_dotenv(ROOT_DIR / ".env.local", override=True)
 
 # ---------------------------------------------------------------------------
 # Config
@@ -33,43 +42,49 @@ from rag_graph import run_rag_query
 SECRET_KEY = os.getenv("JWT_SECRET_KEY", "change-me-in-production-please")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 8  # 8 hours
+LIVEKIT_ADMIN_AGENT_NAME = os.getenv(
+    "LIVEKIT_ADMIN_AGENT_NAME", "legal-brain-admin-agent"
+)
+IS_AZURE_APP_SERVICE = bool(os.getenv("WEBSITE_HOSTNAME"))
+DEPLOY_MARKER = os.getenv("DEPLOY_MARKER", "legal-brain-backend-2026-04-02-v2")
 
-LIVEKIT_URL = os.getenv("LIVEKIT_URL", "")
-LIVEKIT_API_KEY = os.getenv("LIVEKIT_API_KEY", "")
-LIVEKIT_API_SECRET = os.getenv("LIVEKIT_API_SECRET", "")
 
-# Permissions granted per role
-ROLE_PERMISSIONS: Dict[str, List[str]] = {
-    "admin": ["create_table", "ingest", "manage_users", "query"],
-    "user": ["query"],
-}
+def env_flag(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+RUN_STARTUP_DB_BOOTSTRAP = env_flag(
+    "RUN_STARTUP_DB_BOOTSTRAP", default=not IS_AZURE_APP_SERVICE
+)
+LIVEKIT_ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "https://legal-brain-admin-agent.vercel.app",
+]
 
 app = FastAPI(title="The Legal Brain", version="1.0.0")
-FRONTEND_PATH = Path(__file__).with_name("frontend.html")
-
-# ---------------------------------------------------------------------------
-# CORS — allow Vercel frontend + local dev
-# ---------------------------------------------------------------------------
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://legal-brain-admin-agent.vercel.app",
-        "https://legal-brain-app.azurewebsites.net",
-        "http://localhost:3000",
-        "http://localhost:8000",
-    ],
-    allow_credentials=True,
+    allow_origins=LIVEKIT_ALLOWED_ORIGINS,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+FRONTEND_PATH = Path(__file__).with_name("frontend.html")
 
 
 @app.on_event("startup")
 def on_startup() -> None:
     """Ensure the app_user table exists and default accounts are seeded."""
+    if not RUN_STARTUP_DB_BOOTSTRAP:
+        print("[startup] Skipping DB bootstrap on startup.")
+        return
+
     try:
-        from db import db_cursor
+        from db import db_cursor, ensure_app_user_schema
 
         with db_cursor() as (_, cur):
             cur.execute("""
@@ -77,10 +92,11 @@ def on_startup() -> None:
                     user_id BIGSERIAL PRIMARY KEY,
                     username TEXT NOT NULL UNIQUE,
                     hashed_password TEXT NOT NULL,
-                    role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'user')),
+                    permissions TEXT[] NOT NULL DEFAULT '{read}',
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 )
             """)
+        ensure_app_user_schema()
         seed_default_users()
     except Exception as exc:
         print(f"[startup] Warning: could not seed users: {exc}")
@@ -93,15 +109,30 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 # ---------------------------------------------------------------------------
 
 
-def get_permissions(role: str) -> List[str]:
-    return ROLE_PERMISSIONS.get(role, [])
-
-
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
     expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=15))
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def get_required_env(name: str) -> str:
+    value = os.getenv(name)
+    if not value:
+        env_file = Path(__file__).with_name(".env")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=(
+                f"Missing required environment variable: {name}. "
+                f"Add it to {env_file} and restart the backend."
+            ),
+        )
+    return value
+
+
+def get_admin_agent_room_name(user_id: int) -> str:
+    session_suffix = uuid4().hex[:10]
+    return f"admin-room-{user_id}-{session_suffix}"
 
 
 def get_current_user(token: str = Depends(oauth2_scheme)) -> Dict[str, Any]:
@@ -124,14 +155,17 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> Dict[str, Any]:
     return user
 
 
-def require_admin(
-    current_user: Dict[str, Any] = Depends(get_current_user),
-) -> Dict[str, Any]:
-    if current_user["role"] != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required."
-        )
-    return current_user
+def require_permission(permission: str):
+    """Dependency factory: ensures the current user holds a specific permission."""
+    def _checker(current_user: Dict[str, Any] = Depends(get_current_user)):
+        user_perms = current_user.get("permissions") or []
+        if permission not in user_perms:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Missing required permission: {permission}",
+            )
+        return current_user
+    return Depends(_checker)
 
 
 # ---------------------------------------------------------------------------
@@ -142,22 +176,31 @@ def require_admin(
 class Token(BaseModel):
     access_token: str
     token_type: str
-    role: str
-    username: str
     user_id: int
     permissions: List[str]
+    username: str
+
+
+class AgentTokenResponse(BaseModel):
+    server_url: str
+    participant_token: str
+    room_name: str
 
 
 class UserCreate(BaseModel):
     username: str
     password: str
-    role: str = Field(default="user", pattern="^(admin|user)$")
+    permissions: List[str] = Field(default=["read"])
+
+
+class UserUpdate(BaseModel):
+    permissions: List[str]
 
 
 class UserOut(BaseModel):
     user_id: int
     username: str
-    role: str
+    permissions: List[str]
     created_at: Any
 
 
@@ -176,6 +219,10 @@ class IngestRequest(BaseModel):
     directory: str = Field(
         default=".", description="Directory containing judgment/statute PDFs."
     )
+
+
+class CaseNoteUpdate(BaseModel):
+    notes: str = Field("", description="Free-text note for a case record.")
 
 
 # ---------------------------------------------------------------------------
@@ -204,12 +251,11 @@ def login(form_data: OAuth2PasswordRequestForm = Depends()) -> Token:
             detail="Incorrect username or password.",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    permissions = get_permissions(user["role"])
+    permissions = user.get("permissions") or ["read"]
     token = create_access_token(
         data={
             "sub": user["username"],
-            "role": user["role"],
-            "user_id": user["user_id"],
+            "user_id": int(user["user_id"]),
             "permissions": permissions,
         },
         expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
@@ -217,65 +263,19 @@ def login(form_data: OAuth2PasswordRequestForm = Depends()) -> Token:
     return Token(
         access_token=token,
         token_type="bearer",
-        role=user["role"],
-        username=user["username"],
-        user_id=user["user_id"],
+        user_id=int(user["user_id"]),
         permissions=permissions,
+        username=user["username"],
     )
 
 
 @app.get("/auth/me")
 def me(current_user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
     return {
-        "username": current_user["username"],
-        "role": current_user["role"],
         "user_id": current_user["user_id"],
-        "permissions": get_permissions(current_user["role"]),
+        "username": current_user["username"],
+        "permissions": current_user.get("permissions") or ["read"],
     }
-
-
-# ---------------------------------------------------------------------------
-# LiveKit agent token (admin only)
-# ---------------------------------------------------------------------------
-
-
-@app.get("/admin/agent-token")
-def get_agent_token(
-    current_user: Dict[str, Any] = Depends(require_admin),
-) -> Dict[str, Any]:
-    if not LIVEKIT_API_KEY or not LIVEKIT_API_SECRET or not LIVEKIT_URL:
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "LIVEKIT_API_KEY is not configured on the backend yet. "
-                "Add LIVEKIT_URL, LIVEKIT_API_KEY, and LIVEKIT_API_SECRET "
-                "to the backend environment variables, then restart."
-            ),
-        )
-    try:
-        from livekit.api import AccessToken, VideoGrants
-
-        room_name = f"legal-brain-admin-{uuid.uuid4().hex[:8]}"
-        token = (
-            AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET)
-            .with_identity(current_user["username"])
-            .with_name(current_user["username"])
-            .with_grants(VideoGrants(room_join=True, room=room_name))
-        )
-        return {
-            "participant_token": token.to_jwt(),
-            "server_url": LIVEKIT_URL,
-            "room_name": room_name,
-        }
-    except ImportError:
-        raise HTTPException(
-            status_code=503,
-            detail="LIVEKIT_API_KEY is not configured: livekit package not installed.",
-        )
-    except Exception as exc:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to create agent token: {exc}"
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -283,23 +283,123 @@ def get_agent_token(
 # ---------------------------------------------------------------------------
 
 
+@app.get("/admin/agent-token", response_model=AgentTokenResponse)
+def get_admin_agent_token(
+    current_user: Dict[str, Any] = require_permission("create_table"),
+) -> AgentTokenResponse:
+    try:
+        from livekit.api import (
+            AccessToken,
+            RoomAgentDispatch,
+            RoomConfiguration,
+            VideoGrants,
+        )
+    except ImportError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="LiveKit dependencies are not installed on the FastAPI server.",
+        ) from exc
+
+    room_name = get_admin_agent_room_name(int(current_user["user_id"]))
+    participant_identity = f"admin-{current_user['user_id']}-{uuid4().hex[:10]}"
+    permissions = current_user.get("permissions") or ["read"]
+    metadata = json.dumps(
+        {
+            "user_id": str(current_user["user_id"]),
+            "username": current_user["username"],
+            "permissions": permissions,
+            "room_name": room_name,
+        }
+    )
+
+    try:
+        token = (
+            AccessToken(
+                api_key=get_required_env("LIVEKIT_API_KEY"),
+                api_secret=get_required_env("LIVEKIT_API_SECRET"),
+            )
+            .with_identity(participant_identity)
+            .with_name(current_user["username"])
+            .with_metadata(metadata)
+            .with_attributes(
+                {
+                    "user_id": str(current_user["user_id"]),
+                    "username": current_user["username"],
+                    "permissions": ",".join(permissions),
+                }
+            )
+            .with_ttl(timedelta(hours=1))
+            .with_grants(
+                VideoGrants(
+                    room_join=True,
+                    room=room_name,
+                    can_publish=True,
+                    can_publish_data=True,
+                    can_subscribe=True,
+                )
+            )
+            .with_room_config(
+                RoomConfiguration(
+                    agents=[
+                        RoomAgentDispatch(
+                            agent_name=LIVEKIT_ADMIN_AGENT_NAME,
+                            metadata=metadata,
+                        )
+                    ]
+                )
+            )
+        )
+        participant_token = token.to_jwt()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate LiveKit agent token: {exc}",
+        ) from exc
+
+    return AgentTokenResponse(
+        server_url=get_required_env("LIVEKIT_URL"),
+        participant_token=participant_token,
+        room_name=room_name,
+    )
+
+
 @app.post("/admin/users", response_model=UserOut)
-def create_new_user(body: UserCreate, _: Dict = Depends(require_admin)) -> UserOut:
+def create_new_user(body: UserCreate, _: Dict = require_permission("create_table")) -> UserOut:
+    invalid = set(body.permissions) - VALID_PERMISSIONS
+    if invalid:
+        raise HTTPException(status_code=400, detail=f"Invalid permissions: {invalid}")
     existing = get_user_by_username(body.username)
     if existing:
         raise HTTPException(status_code=400, detail="Username already exists.")
-    row = create_user(body.username, body.password, body.role)
+    row = create_user(body.username, body.password, permissions=body.permissions)
     return UserOut(**row)
 
 
 @app.get("/admin/users")
-def get_users(_: Dict = Depends(require_admin)) -> List[Dict[str, Any]]:
+def get_users(_: Dict = require_permission("create_table")) -> List[Dict[str, Any]]:
     return list_users()
+
+
+@app.put("/admin/users/{user_id}")
+def update_user(
+    user_id: int, body: UserUpdate, _: Dict = require_permission("create_table")
+) -> Dict[str, Any]:
+    invalid = set(body.permissions) - VALID_PERMISSIONS
+    if invalid:
+        raise HTTPException(status_code=400, detail=f"Invalid permissions: {invalid}")
+    if not body.permissions:
+        raise HTTPException(status_code=400, detail="Must have at least one permission.")
+    updated = update_user_permissions(user_id, body.permissions)
+    if not updated:
+        raise HTTPException(status_code=404, detail="User not found.")
+    return updated
 
 
 @app.delete("/admin/users/{username}")
 def remove_user(
-    username: str, current_user: Dict = Depends(require_admin)
+    username: str, current_user: Dict = require_permission("create_table")
 ) -> Dict[str, str]:
     if username == current_user["username"]:
         raise HTTPException(status_code=400, detail="Cannot delete your own account.")
@@ -314,23 +414,28 @@ def remove_user(
 
 
 @app.get("/health")
-def healthcheck() -> Dict[str, str]:
-    return {"status": "ok", "service": "The Legal Brain"}
+def healthcheck() -> Dict[str, Any]:
+    return {
+        "status": "ok",
+        "service": "The Legal Brain",
+        "deploy_marker": DEPLOY_MARKER,
+        "startup_db_bootstrap": RUN_STARTUP_DB_BOOTSTRAP,
+    }
 
 
 @app.get("/schema")
-def schema_summary(_: Dict = Depends(get_current_user)) -> Dict[str, Any]:
+def schema_summary(_: Dict = require_permission("read")) -> Dict[str, Any]:
     return export_schema_summary()
 
 
 @app.get("/ui/tables")
-def get_tables(_: Dict = Depends(get_current_user)) -> Dict[str, Any]:
+def get_tables(_: Dict = require_permission("read")) -> Dict[str, Any]:
     return {"tables": list_public_tables()}
 
 
 @app.get("/ui/tables/{table_name}")
 def get_table_rows(
-    table_name: str, limit: int = 50, _: Dict = Depends(get_current_user)
+    table_name: str, limit: int = 50, _: Dict = require_permission("read")
 ) -> Dict[str, Any]:
     try:
         return fetch_table_rows(table_name, limit=limit)
@@ -340,9 +445,28 @@ def get_table_rows(
 
 @app.post("/query", response_model=QueryResponse)
 def query_legal_brain(
-    request: QueryRequest, _: Dict = Depends(get_current_user)
+    request: QueryRequest, _: Dict = require_permission("read")
 ) -> QueryResponse:
-    return QueryResponse(**run_rag_query(request.query, top_k=request.top_k))
+    try:
+        return QueryResponse(**run_rag_query(request.query, top_k=request.top_k))
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=(
+                "Legal query failed. Check the Azure OpenAI chat and embedding "
+                "deployments for the main Legal Brain app."
+            ),
+        ) from exc
+
+
+@app.put("/ui/tables/case/{case_id}/notes")
+def update_case_note(
+    case_id: int, body: CaseNoteUpdate, _: Dict = require_permission("update_records")
+) -> Dict[str, Any]:
+    updated = update_case_notes(case_id, body.notes)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Case not found.")
+    return updated
 
 
 # ---------------------------------------------------------------------------
@@ -351,7 +475,7 @@ def query_legal_brain(
 
 
 @app.post("/admin/init-db")
-def initialize_database(_: Dict = Depends(require_admin)) -> Dict[str, str]:
+def initialize_database(_: Dict = require_permission("create_table")) -> Dict[str, str]:
     init_db()
     seed_default_users()
     return {"status": "initialized"}
@@ -359,7 +483,7 @@ def initialize_database(_: Dict = Depends(require_admin)) -> Dict[str, str]:
 
 @app.post("/admin/ingest")
 def ingest_documents(
-    request: IngestRequest, _: Dict = Depends(require_admin)
+    request: IngestRequest, _: Dict = require_permission("write")
 ) -> Dict[str, Any]:
     directory = Path(request.directory).resolve()
     if not directory.exists():

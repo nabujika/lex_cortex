@@ -26,6 +26,10 @@ def get_embedding_dimensions() -> int:
     return int(os.getenv("AZURE_OPENAI_EMBEDDING_DIMENSIONS", "1536"))
 
 
+def get_connect_timeout() -> int:
+    return int(os.getenv("POSTGRES_CONNECT_TIMEOUT", "10"))
+
+
 SCHEMA_SQL_TEMPLATE = """
 CREATE EXTENSION IF NOT EXISTS vector;
 
@@ -50,6 +54,7 @@ CREATE TABLE IF NOT EXISTS "case" (
     filing_date DATE,
     judgment_date DATE,
     status TEXT,
+    notes TEXT,
     court_id BIGINT REFERENCES court(court_id),
     presiding_judge_id BIGINT REFERENCES judge(judge_id),
     UNIQUE (title, judgment_date)
@@ -115,7 +120,7 @@ CREATE TABLE IF NOT EXISTS app_user (
     user_id BIGSERIAL PRIMARY KEY,
     username TEXT NOT NULL UNIQUE,
     hashed_password TEXT NOT NULL,
-    role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'user')),
+    permissions TEXT[] NOT NULL DEFAULT '{read}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 """
@@ -128,7 +133,11 @@ def get_schema_sql() -> str:
 def get_db_connection() -> psycopg.Connection:
     database_url = os.getenv("DATABASE_URL")
     if database_url:
-        return psycopg.connect(database_url, row_factory=dict_row)
+        return psycopg.connect(
+            database_url,
+            connect_timeout=get_connect_timeout(),
+            row_factory=dict_row,
+        )
 
     return psycopg.connect(
         host=get_env("POSTGRES_HOST"),
@@ -137,6 +146,7 @@ def get_db_connection() -> psycopg.Connection:
         user=get_env("POSTGRES_USER"),
         password=get_env("POSTGRES_PASSWORD"),
         sslmode=os.getenv("POSTGRES_SSLMODE", "require"),
+        connect_timeout=get_connect_timeout(),
         row_factory=dict_row,
     )
 
@@ -159,6 +169,44 @@ def init_db() -> None:
     # Applies the full relational + vector schema in one place for local runs and cloud deployments.
     with db_cursor() as (_, cur):
         cur.execute(get_schema_sql())
+    ensure_app_user_schema()
+
+
+def ensure_app_user_schema() -> None:
+    """
+    Keep local/dev auth schema compatible across older `role`-based and newer
+    `permissions`-based app_user table variants.
+    """
+    with db_cursor() as (_, cur):
+        cur.execute(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_name = 'app_user'
+            """
+        )
+        columns = {row["column_name"] for row in cur.fetchall()}
+
+        if "permissions" not in columns:
+            cur.execute(
+                """
+                ALTER TABLE app_user
+                ADD COLUMN permissions TEXT[] NOT NULL DEFAULT '{read}'
+                """
+            )
+
+            if "role" in columns:
+                cur.execute(
+                    """
+                    UPDATE app_user
+                    SET permissions = CASE LOWER(COALESCE(role, ''))
+                        WHEN 'admin' THEN ARRAY['read', 'write', 'create_table']
+                        WHEN 'writer' THEN ARRAY['read', 'write']
+                        WHEN 'editor' THEN ARRAY['read', 'write', 'update_records']
+                        ELSE ARRAY['read']
+                    END
+                    """
+                )
 
 
 def get_azure_openai_client() -> AzureOpenAI:
@@ -612,16 +660,18 @@ def verify_password(plain: str, hashed: str) -> bool:
     return pwd_context.verify(plain, hashed)
 
 
-def create_user(username: str, password: str, role: str = "user") -> Dict[str, Any]:
+def create_user(username: str, password: str, permissions: List[str] = None) -> Dict[str, Any]:
+    if permissions is None:
+        permissions = ["read"]
     hashed = hash_password(password)
     with db_cursor() as (_, cur):
         cur.execute(
             """
-            INSERT INTO app_user (username, hashed_password, role)
+            INSERT INTO app_user (username, hashed_password, permissions)
             VALUES (%s, %s, %s)
-            RETURNING user_id, username, role, created_at
+            RETURNING user_id, username, permissions, created_at
             """,
-            (username, hashed, role),
+            (username, hashed, permissions),
         )
         return dict(cur.fetchone())
 
@@ -629,7 +679,7 @@ def create_user(username: str, password: str, role: str = "user") -> Dict[str, A
 def get_user_by_username(username: str) -> Optional[Dict[str, Any]]:
     with db_cursor() as (_, cur):
         cur.execute(
-            "SELECT user_id, username, hashed_password, role, created_at FROM app_user WHERE username = %s",
+            "SELECT user_id, username, hashed_password, permissions, created_at FROM app_user WHERE username = %s",
             (username,),
         )
         row = cur.fetchone()
@@ -639,7 +689,7 @@ def get_user_by_username(username: str) -> Optional[Dict[str, Any]]:
 def list_users() -> List[Dict[str, Any]]:
     with db_cursor() as (_, cur):
         cur.execute(
-            "SELECT user_id, username, role, created_at FROM app_user ORDER BY created_at"
+            "SELECT user_id, username, permissions, created_at FROM app_user ORDER BY created_at"
         )
         return [dict(r) for r in cur.fetchall()]
 
@@ -652,9 +702,37 @@ def delete_user(username: str) -> bool:
         return cur.fetchone() is not None
 
 
+def update_case_notes(case_id: int, notes: str) -> Optional[Dict[str, Any]]:
+    with db_cursor() as (_, cur):
+        cur.execute(
+            """
+            UPDATE "case" SET notes = %s
+            WHERE case_id = %s
+            RETURNING case_id, title, notes
+            """,
+            (notes, case_id),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def update_user_permissions(user_id: int, permissions: List[str]) -> Optional[Dict[str, Any]]:
+    with db_cursor() as (_, cur):
+        cur.execute(
+            """
+            UPDATE app_user SET permissions = %s
+            WHERE user_id = %s
+            RETURNING user_id, username, permissions, created_at
+            """,
+            (permissions, user_id),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
 def seed_default_users() -> None:
     """Create default admin and user accounts if they don't exist yet."""
     if not get_user_by_username("admin"):
-        create_user("admin", "admin123", role="admin")
+        create_user("admin", "admin123", permissions=["read", "write", "create_table"])
     if not get_user_by_username("user"):
-        create_user("user", "user123", role="user")
+        create_user("user", "user123", permissions=["read"])
