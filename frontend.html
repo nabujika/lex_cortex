@@ -886,16 +886,19 @@ async function enterApp() {
 
   // Show admin tab if user has create_table permission
   const hasAdmin = perms.includes("create_table");
-  document.querySelectorAll(".admin-only").forEach(el => {
-    el.style.display = hasAdmin ? "" : "none";
-  });
 
+  // AI agent button (topbar)
   const aiAgentLink = document.getElementById("ai-agent-link");
   if (aiAgentLink) {
+    aiAgentLink.style.display = hasAdmin ? "inline-flex" : "none";
     aiAgentLink.href = hasAdmin && token
       ? `${AI_AGENT_URL}#token=${encodeURIComponent(token)}`
       : AI_AGENT_URL;
   }
+
+  // Admin tab button
+  const adminTabBtn = document.querySelector(".tab-btn[data-tab='admin']");
+  if (adminTabBtn) adminTabBtn.style.display = hasAdmin ? "inline-block" : "none";
 
   checkHealth();
   loadTables();
