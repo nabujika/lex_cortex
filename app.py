@@ -1,9 +1,11 @@
 import os
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
@@ -32,8 +34,35 @@ SECRET_KEY = os.getenv("JWT_SECRET_KEY", "change-me-in-production-please")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 8  # 8 hours
 
+LIVEKIT_URL = os.getenv("LIVEKIT_URL", "")
+LIVEKIT_API_KEY = os.getenv("LIVEKIT_API_KEY", "")
+LIVEKIT_API_SECRET = os.getenv("LIVEKIT_API_SECRET", "")
+
+# Permissions granted per role
+ROLE_PERMISSIONS: Dict[str, List[str]] = {
+    "admin": ["create_table", "ingest", "manage_users", "query"],
+    "user": ["query"],
+}
+
 app = FastAPI(title="The Legal Brain", version="1.0.0")
 FRONTEND_PATH = Path(__file__).with_name("frontend.html")
+
+# ---------------------------------------------------------------------------
+# CORS — allow Vercel frontend + local dev
+# ---------------------------------------------------------------------------
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://legal-brain-admin-agent.vercel.app",
+        "https://legal-brain-app.azurewebsites.net",
+        "http://localhost:3000",
+        "http://localhost:8000",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.on_event("startup")
@@ -62,6 +91,10 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 # ---------------------------------------------------------------------------
 # Auth helpers
 # ---------------------------------------------------------------------------
+
+
+def get_permissions(role: str) -> List[str]:
+    return ROLE_PERMISSIONS.get(role, [])
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
@@ -111,6 +144,8 @@ class Token(BaseModel):
     token_type: str
     role: str
     username: str
+    user_id: int
+    permissions: List[str]
 
 
 class UserCreate(BaseModel):
@@ -169,8 +204,14 @@ def login(form_data: OAuth2PasswordRequestForm = Depends()) -> Token:
             detail="Incorrect username or password.",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    permissions = get_permissions(user["role"])
     token = create_access_token(
-        data={"sub": user["username"], "role": user["role"]},
+        data={
+            "sub": user["username"],
+            "role": user["role"],
+            "user_id": user["user_id"],
+            "permissions": permissions,
+        },
         expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
     )
     return Token(
@@ -178,12 +219,63 @@ def login(form_data: OAuth2PasswordRequestForm = Depends()) -> Token:
         token_type="bearer",
         role=user["role"],
         username=user["username"],
+        user_id=user["user_id"],
+        permissions=permissions,
     )
 
 
 @app.get("/auth/me")
 def me(current_user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
-    return {"username": current_user["username"], "role": current_user["role"]}
+    return {
+        "username": current_user["username"],
+        "role": current_user["role"],
+        "user_id": current_user["user_id"],
+        "permissions": get_permissions(current_user["role"]),
+    }
+
+
+# ---------------------------------------------------------------------------
+# LiveKit agent token (admin only)
+# ---------------------------------------------------------------------------
+
+
+@app.get("/admin/agent-token")
+def get_agent_token(
+    current_user: Dict[str, Any] = Depends(require_admin),
+) -> Dict[str, Any]:
+    if not LIVEKIT_API_KEY or not LIVEKIT_API_SECRET or not LIVEKIT_URL:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "LIVEKIT_API_KEY is not configured on the backend yet. "
+                "Add LIVEKIT_URL, LIVEKIT_API_KEY, and LIVEKIT_API_SECRET "
+                "to the backend environment variables, then restart."
+            ),
+        )
+    try:
+        from livekit.api import AccessToken, VideoGrants
+
+        room_name = f"legal-brain-admin-{uuid.uuid4().hex[:8]}"
+        token = (
+            AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET)
+            .with_identity(current_user["username"])
+            .with_name(current_user["username"])
+            .with_grants(VideoGrants(room_join=True, room=room_name))
+        )
+        return {
+            "participant_token": token.to_jwt(),
+            "server_url": LIVEKIT_URL,
+            "room_name": room_name,
+        }
+    except ImportError:
+        raise HTTPException(
+            status_code=503,
+            detail="LIVEKIT_API_KEY is not configured: livekit package not installed.",
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to create agent token: {exc}"
+        )
 
 
 # ---------------------------------------------------------------------------
